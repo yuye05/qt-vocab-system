@@ -1,0 +1,658 @@
+/* ============================================
+   全局样式 — 词汇学习系统
+   设计锚点：Organic
+   大地色调 · 温暖可读 · 圆润克制
+   ============================================ */
+
+/* 全局字体 */
+* {
+    font-family: "Microsoft YaHei", "微软雅黑", sans-serif;
+}
+
+/* ============================================
+   主窗口 & 全局背景（燕麦色 — 不纯白）
+   ============================================ */
+
+#mainWindow {
+    background-color: #EBE4D6;
+}
+
+#centralWidget {
+    background-color: #EBE4D6;
+}
+
+/* ============================================
+   左侧导航栏（深苔藓绿，非蓝黑）
+   ============================================ */
+
+#sidebar {
+    background-color: #2D3A2C;
+    border: none;
+}
+
+#logo {
+    color: #F5F0E8;
+    font-size: 18px;
+    font-weight: bold;
+    background-color: #1F2A1E;
+    border: none;
+    padding: 0px;
+}
+
+#versionLabel {
+    color: #7A8E6E;
+    font-size: 12px;
+    background-color: #1F2A1E;
+    border: none;
+}
+
+/* 导航列表 */
+#navList {
+    background-color: #2D3A2C;
+    border: none;
+    outline: none;
+    padding: 8px 0px;
+    font-size: 15px;
+}
+
+#navList::item {
+    color: #A5B89A;
+    padding: 12px 20px;
+    margin: 2px 10px;
+    border-radius: 10px;
+    border: none;
+}
+
+#navList::item:hover {
+    color: #F5F0E8;
+    background-color: #3D4A3C;
+}
+
+#navList::item:selected {
+    color: #FFFFFF;
+    background-color: #C66B3D;
+    font-weight: bold;
+}
+
+/* ============================================
+   页面内容区
+   ============================================ */
+
+#pageStack {
+    background-color: #EBE4D6;
+}
+
+QWidget#pageStack > QWidget {
+    background-color: #EBE4D6;
+}
+
+/* 页面标题 */
+#pageTitle {
+    font-size: 22px;
+    font-weight: bold;
+    color: #2C2416;
+    margin-bottom: 6px;
+    padding: 0px;
+}
+
+/* 卡片标题 */
+#cardTitle {
+    font-size: 16px;
+    font-weight: bold;
+    color: #2C2416;
+    margin-bottom: 4px;
+    padding: 0px;
+}
+
+/* 占位文字 */
+#placeholder {
+    font-size: 15px;
+    color: #8B7E6A;
+    padding: 16px;
+    line-height: 1.6;
+}
+
+/* ============================================
+   统计卡片（暖白表面，深赤陶数字）
+   ============================================ */
+
+#statsCard {
+    background-color: #F5F0E8;
+    border-radius: 16px;
+    border: 1px solid #D9CEBB;
+    padding: 8px;
+}
+
+#statNumber {
+    font-size: 32px;
+    font-weight: bold;
+    color: #C66B3D;
+    padding: 0px;
+}
+
+#statLabel {
+    font-size: 13px;
+    color: #8B7E6A;
+    margin-top: 2px;
+    padding: 0px;
+}
+
+/* ============================================
+   词性分布卡片（有机色谱映射词性）
+   ============================================ */
+
+#posCard {
+    background-color: #F5F0E8;
+    border-radius: 16px;
+    border: 1px solid #D9CEBB;
+    padding: 8px;
+}
+
+#posBarContainer {
+    background-color: transparent;
+}
+
+#posNameLabel {
+    font-size: 14px;
+    font-weight: bold;
+    color: #2C2416;
+    padding: 0px;
+}
+
+#posCountLabel {
+    font-size: 14px;
+    color: #8B7355;
+    padding: 0px;
+}
+
+/* 进度条样式（由内联 setStyleSheet 控制，此处仅设全局默认） */
+QProgressBar {
+    border: none;
+}
+
+/* ============================================
+   提示卡片
+   ============================================ */
+
+#hintCard {
+    background-color: #F5F0E8;
+    border-radius: 16px;
+    border: 1px solid #D9CEBB;
+    padding: 8px;
+}
+
+#hintTitle {
+    font-size: 16px;
+    font-weight: bold;
+    color: #2C2416;
+    margin-bottom: 6px;
+    padding: 0px;
+}
+
+#hintDesc {
+    font-size: 14px;
+    color: #6B5D4C;
+    line-height: 1.7;
+    padding: 0px;
+}
+
+/* ============================================
+   通用控件样式
+   ============================================ */
+
+/* 主按钮（赤陶色） */
+QPushButton {
+    background-color: #C66B3D;
+    color: #FFFFFF;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 22px;
+    font-size: 14px;
+    font-weight: bold;
+}
+
+QPushButton:hover {
+    background-color: #B05A32;
+}
+
+QPushButton:pressed {
+    background-color: #8B4226;
+}
+
+/* 输入框 */
+QLineEdit {
+    border: 2px solid #D9CEBB;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 14px;
+    color: #2C2416;
+    background-color: #F5F0E8;
+}
+
+QLineEdit:focus {
+    border-color: #C66B3D;
+}
+
+/* 表格 */
+QTableWidget {
+    background-color: #F5F0E8;
+    border: 1px solid #D9CEBB;
+    border-radius: 10px;
+    gridline-color: #EBE4D6;
+    font-size: 14px;
+}
+
+QTableWidget::item {
+    padding: 8px 10px;
+}
+
+QHeaderView::section {
+    background-color: #F0EADD;
+    border: none;
+    border-bottom: 2px solid #D9CEBB;
+    padding: 10px 10px;
+    font-size: 13px;
+    font-weight: bold;
+    color: #6B5D4C;
+}
+
+/* 滚动条 */
+QScrollBar:vertical {
+    background: #EBE4D6;
+    width: 8px;
+    border-radius: 4px;
+}
+
+QScrollBar::handle:vertical {
+    background: #C4B99E;
+    border-radius: 4px;
+    min-height: 30px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: #A89878;
+}
+
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    height: 0px;
+}
+
+/* ============================================
+   测验页面样式
+   ============================================ */
+
+/* 分区标题 */
+#quizSectionLabel {
+    font-size: 15px;
+    font-weight: bold;
+    color: #2C2416;
+    padding: 0px;
+}
+
+/* 模式切换按钮 */
+#modeBtn {
+    background-color: #D9CEBB;
+    color: #6B5D4C;
+    border: none;
+    border-radius: 10px;
+    padding: 0px;
+    font-size: 15px;
+    font-weight: bold;
+}
+
+#modeBtn:hover {
+    background-color: #C4B99E;
+}
+
+#modeBtn:checked {
+    background-color: #C66B3D;
+    color: #FFFFFF;
+}
+
+/* 题数按钮 */
+#countBtn {
+    background-color: #D9CEBB;
+    color: #6B5D4C;
+    border: none;
+    border-radius: 10px;
+    padding: 0px;
+    font-size: 16px;
+    font-weight: bold;
+}
+
+#countBtn:hover {
+    background-color: #C4B99E;
+}
+
+#countBtn:checked {
+    background-color: #C66B3D;
+    color: #FFFFFF;
+}
+
+/* 开始测验按钮 */
+#startQuizBtn {
+    background-color: #C66B3D;
+    color: #FFFFFF;
+    border: none;
+    border-radius: 12px;
+    font-size: 16px;
+    font-weight: bold;
+}
+
+#startQuizBtn:hover {
+    background-color: #B05A32;
+}
+
+#startQuizBtn:pressed {
+    background-color: #8B4226;
+}
+
+/* 进度文字 */
+#quizProgressLabel {
+    font-size: 14px;
+    font-weight: bold;
+    color: #6B5D4C;
+    padding: 0px;
+}
+
+/* 取消按钮 */
+#cancelQuizBtn {
+    background-color: transparent;
+    color: #8B7E6A;
+    border: 2px solid #D9CEBB;
+    border-radius: 8px;
+    padding: 0px;
+    font-size: 13px;
+    font-weight: bold;
+}
+
+#cancelQuizBtn:hover {
+    background-color: #D9CEBB;
+    color: #2C2416;
+}
+
+/* 题目文字 */
+#quizQuestion {
+    font-size: 24px;
+    color: #2C2416;
+    font-weight: bold;
+    padding: 16px;
+}
+
+/* 拼写输入框 */
+#quizSpellingInput {
+    border: 2px solid #D9CEBB;
+    border-radius: 12px;
+    padding: 12px 16px;
+    font-size: 18px;
+    color: #2C2416;
+    background-color: #F5F0E8;
+}
+
+#quizSpellingInput:focus {
+    border-color: #C66B3D;
+}
+
+#quizSpellingInput:disabled {
+    background-color: #EBE4D6;
+    color: #8B7E6A;
+}
+
+/* 选择题选项按钮 */
+#quizOptionBtn {
+    background-color: #F5F0E8;
+    color: #2C2416;
+    border: 2px solid #D9CEBB;
+    border-radius: 10px;
+    padding: 10px 8px;
+    font-size: 14px;
+    font-weight: bold;
+}
+
+#quizOptionBtn:hover {
+    background-color: #EBE4D6;
+    border-color: #C66B3D;
+}
+
+#quizOptionBtn:disabled {
+    background-color: #EBE4D6;
+    color: #8B7E6A;
+    border: 2px solid #D9CEBB;
+}
+
+/* 反馈文字（颜色由代码动态设置） */
+#quizFeedback {
+    font-size: 16px;
+    font-weight: bold;
+    padding: 8px;
+}
+
+/* 操作按钮（提交/下一题/查看结果） */
+#quizActionBtn {
+    background-color: #C66B3D;
+    color: #FFFFFF;
+    border: none;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: bold;
+}
+
+#quizActionBtn:hover {
+    background-color: #B05A32;
+}
+
+#quizActionBtn:pressed {
+    background-color: #8B4226;
+}
+
+/* 结果页标题 */
+#quizDoneTitle {
+    font-size: 24px;
+    font-weight: bold;
+    color: #2C2416;
+    padding: 8px;
+}
+
+/* 得分数字 */
+#quizScoreLabel {
+    font-size: 28px;
+    font-weight: bold;
+    color: #C66B3D;
+    padding: 8px;
+}
+
+/* 全对鼓励 */
+#quizPerfectLabel {
+    font-size: 18px;
+    font-weight: bold;
+    color: #606C38;
+    padding: 24px;
+}
+
+/* 错题标题 */
+#quizWrongTitle {
+    font-size: 15px;
+    font-weight: bold;
+    color: #8B7E6A;
+    padding: 8px 0px;
+}
+
+/* 错题条目 */
+#quizWrongItem {
+    font-size: 14px;
+    color: #C66B3D;
+    padding: 6px 12px;
+    background-color: #F5F0E8;
+    border-radius: 8px;
+    margin: 2px 0px;
+}
+
+/* 结果页按钮 */
+#quizRetryBtn {
+    background-color: #C66B3D;
+    color: #FFFFFF;
+    border: none;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: bold;
+}
+
+#quizRetryBtn:hover {
+    background-color: #B05A32;
+}
+
+#quizBackBtn {
+    background-color: transparent;
+    color: #6B5D4C;
+    border: 2px solid #D9CEBB;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: bold;
+}
+
+#quizBackBtn:hover {
+    background-color: #D9CEBB;
+    color: #2C2416;
+}
+
+/* ============================================
+   生词本页面样式
+   ============================================ */
+
+/* 排序按钮 */
+#wrongSortBtn {
+    background-color: #F5F0E8;
+    color: #6B5D4C;
+    border: 1px solid #D9CEBB;
+    border-radius: 8px;
+    padding: 6px 16px;
+    font-size: 13px;
+    font-weight: bold;
+}
+
+#wrongSortBtn:hover {
+    background-color: #EBE4D6;
+    border-color: #C66B3D;
+}
+
+/* 列表容器 */
+#wrongScroll {
+    background-color: transparent;
+    border: none;
+}
+
+#wrongListContainer {
+    background-color: transparent;
+}
+
+/* 生词条目行 */
+#wrongEntryRow {
+    background-color: #F5F0E8;
+    border-radius: 10px;
+    border: 1px solid #D9CEBB;
+    margin: 2px 0px;
+}
+
+/* 生词条目文字 */
+#wrongEntryWord {
+    font-size: 15px;
+    font-weight: bold;
+    color: #2C2416;
+    padding: 0px;
+}
+
+/* 错误次数 */
+#wrongEntryCount {
+    font-size: 13px;
+    font-weight: bold;
+    color: #C66B3D;
+    padding: 0px;
+}
+
+/* 删除按钮 */
+#wrongDeleteBtn {
+    background-color: transparent;
+    color: #8B7E6A;
+    border: none;
+    border-radius: 4px;
+    font-size: 16px;
+    font-weight: bold;
+    padding: 0px;
+}
+
+#wrongDeleteBtn:hover {
+    background-color: #C66B3D;
+    color: #FFFFFF;
+}
+
+/* 卡片翻阅：已掌握按钮 */
+#cardMasteredBtn {
+    background-color: #606C38;
+    color: #FFFFFF;
+    border: none;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: bold;
+}
+
+#cardMasteredBtn:hover {
+    background-color: #4A5530;
+}
+
+/* 卡片翻阅：未掌握按钮 */
+#cardNotMasteredBtn {
+    background-color: transparent;
+    color: #6B5D4C;
+    border: 2px solid #D9CEBB;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: bold;
+}
+
+#cardNotMasteredBtn:hover {
+    background-color: #D9CEBB;
+    color: #2C2416;
+}
+
+/* ============================================
+   测验历史卡片样式
+   ============================================ */
+
+#quizHistoryCard {
+    background-color: #F5F0E8;
+    border-radius: 16px;
+    border: 1px solid #D9CEBB;
+    padding: 8px;
+}
+
+#quizHistoryContainer {
+    background-color: transparent;
+}
+
+#quizHistoryMode {
+    font-size: 13px;
+    font-weight: bold;
+    color: #6B5D4C;
+    padding: 0px;
+}
+
+#quizHistoryScore {
+    font-size: 13px;
+    font-weight: bold;
+    color: #2C2416;
+    padding: 0px;
+}
+
+#quizHistoryPct {
+    font-size: 13px;
+    font-weight: bold;
+    color: #C66B3D;
+    padding: 0px;
+}
+
+#quizHistorySummary {
+    font-size: 13px;
+    color: #8B7E6A;
+    padding: 4px 0px 0px 0px;
+}
