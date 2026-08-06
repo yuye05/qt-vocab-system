@@ -33,9 +33,9 @@
 
 ## 技术栈
 
-- **语言**：C++17
+- **语言**：C++ 17
 - **框架**：Qt 6.x（Core / GUI / Widgets）
-- **样式**：QSS 自制 Organic 暖色设计系统
+- **样式**：QSS 自主设计 Organic 暖色设计系统
 - **构建**：qmake（`.pro` 工程文件）
 - **词典结构**：二叉搜索树（BST），加载时 Fisher-Yates 打乱防退化
 
