@@ -44,6 +44,16 @@ int main(int argc, char* argv[])
         }
     }
 
+    // 数据目录多路径回退（与 QSS 同思路，style/ 换成 words/）
+    // resolveDataPath 会在这些目录里找 dictionary.txt / wrong_words.txt
+    std::vector<std::string> dataDirs;
+    dataDirs.push_back(QDir(exeDir).filePath("words").toStdString());            // EXE 同级 words/
+    dataDirs.push_back(QDir(exeDir).filePath("../words").toStdString());         // build/ 下
+    dataDirs.push_back(QDir(exeDir).filePath("../release/words").toStdString()); // release
+    dataDirs.push_back(QDir(exeDir).filePath("../debug/words").toStdString());   // debug
+    dataDirs.push_back(QDir(exeDir + "/../..").filePath("words").toStdString()); // 源码目录
+    setDataSearchDirs(dataDirs);
+
     MainWindow window;
     window.show();
 

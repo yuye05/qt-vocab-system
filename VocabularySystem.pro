@@ -36,11 +36,11 @@ msvc {
 # 所以同时复制到两个子目录 + 根目录，确保 Debug/Release 都能找到
 win32 {
     COPIES += vocabularyData
-    vocabularyData.files = data/dictionary.txt data/wrong_words.txt
+    vocabularyData.files = words/dictionary.txt words/wrong_words.txt
     vocabularyData.path = $$OUT_PWD/release
 
     COPIES += vocabularyDataDebug
-    vocabularyDataDebug.files = data/dictionary.txt data/wrong_words.txt
+    vocabularyDataDebug.files = words/dictionary.txt words/wrong_words.txt
     vocabularyDataDebug.path = $$OUT_PWD/debug
 
     COPIES += styleFile

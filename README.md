@@ -63,7 +63,7 @@ flowchart LR
 
 - **页面栈导航**：主窗口侧边栏切换 4 个页面（`QStackedWidget`），各页面独立 Widget，解耦模块
 - **BST 词典**：增删查改 O(log n)；加载时 Fisher-Yates 打乱，避免按字母序插入导致 BST 退化成链表
-- **多路径资源回退**：QSS 和数据文件均从 `applicationDirPath()` 出发做多路径搜索（`exeDir` → `../release` → `../debug` → 源码目录），兼容 Qt Creator shadow build 下 Debug/Release 的工作目录差异
+- **多路径资源回退**：QSS 从 `applicationDirPath()` 出发多路径搜索（`exeDir` → `../release` → `../debug` → 源码目录）；数据文件经 `setDataSearchDirs()` 注册同类目录列表，`resolveDataPath()` 按列表查找，兼容 Qt Creator shadow build 下 Debug/Release 的工作目录差异
 - **数据持久化**：生词本、测验历史以纯文本文件存储，程序启动时加载、退出时落盘
 
 ---
@@ -73,7 +73,7 @@ flowchart LR
 ```
 qt-vocab-system/
 ├── VocabularySystem.pro   # Qt 工程文件（qmake）
-├── main.cpp               # 程序入口，QSS 多路径加载
+├── main.cpp               # 程序入口，QSS 多路径加载 + 数据目录注册
 ├── core/
 │   ├── dictionary.h       # 核心数据结构与函数声明
 │   └── dictionary.cpp     # BST 增删查改 + 测验逻辑 + 生词本
@@ -149,8 +149,8 @@ qt-vocab-system/
 
 ## 已知问题与开发注意事项
 
-1. **资源路径依赖 CWD**：数据文件用相对路径 + 多路径回退查找。若从命令行直接运行 EXE（不设工作目录）可能找不到词典，请从 Qt Creator 运行或保证 CWD 含 `words/`
-2. **Shadow build 复制**：`.pro` 中 `COPIES` 同时配置了 `release/` 和 `debug/`，确保两种构建模式下 EXE 旁都有数据文件和样式
+1. **资源路径**：数据文件经 `setDataSearchDirs()` 注册的目录列表查找（含 `exeDir` → `../words` → `../release/words` → `../debug/words` → 源码目录）。若从命令行直接运行 EXE 且未部署到上述任一目录，可能找不到词典——请从 Qt Creator 运行，或保证数据文件位于搜索路径之一
+2. **Shadow build 复制**：`.pro` 中 `COPIES` 同时配置了 `release/` 和 `debug/`，将数据文件复制到 `$$OUT_PWD/release` 与 `$$OUT_PWD/debug`，确保两种构建模式下 EXE 旁都有数据文件和样式
 3. **中文编码**：MSVC 下 `.pro` 已配置 `/source-charset:utf-8`；MinGW 下无需配置，但要保证源文件是 UTF-8 编码
 
 ---
