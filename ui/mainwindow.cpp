@@ -18,6 +18,19 @@
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent), m_dictRoot(nullptr)
 {
+    // 页面构造时可能读取生词本，先统一设置数据目录。
+    QString exeDir = QCoreApplication::applicationDirPath();
+    std::vector<std::string> dataDirs;
+    dataDirs.push_back(QDir(exeDir).filePath("words").toStdString());
+    dataDirs.push_back(exeDir.toStdString());                          // EXE 同级
+    dataDirs.push_back(QDir(exeDir + "/../words").absolutePath().toStdString()); // build 根的 words/
+    dataDirs.push_back(QDir(exeDir + "/..").absolutePath().toStdString()); // build 根
+    dataDirs.push_back(QDir(exeDir + "/../release/words").absolutePath().toStdString());
+    dataDirs.push_back(QDir(exeDir + "/../release").absolutePath().toStdString()); // release 交叉
+    dataDirs.push_back(QDir(exeDir + "/../../words").absolutePath().toStdString());
+    dataDirs.push_back(QDir(exeDir + "/../../").absolutePath().toStdString());   // 项目根
+    setDataSearchDirs(dataDirs);
+
     setupUi();
     loadDictionary();
 }
@@ -102,15 +115,6 @@ void MainWindow::setupUi()
 
 void MainWindow::loadDictionary()
 {
-    // 设置数据文件搜索路径（解决 Debug/Release/shadow build 路径不一致）
-    QString exeDir = QCoreApplication::applicationDirPath();
-    std::vector<std::string> dataDirs;
-    dataDirs.push_back(exeDir.toStdString());                          // EXE 同级
-    dataDirs.push_back(QDir(exeDir + "/..").absolutePath().toStdString()); // build 根
-    dataDirs.push_back(QDir(exeDir + "/../release").absolutePath().toStdString()); // release 交叉
-    dataDirs.push_back(QDir(exeDir + "/../../").absolutePath().toStdString());   // 项目根
-    setDataSearchDirs(dataDirs);
-
     // 加载词典数据到持久 BST（不再释放）
     m_dictRoot = loadFromFile(nullptr, DICT_FILE);
     int wordCount = countWords(m_dictRoot);

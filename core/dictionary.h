@@ -67,7 +67,8 @@ void prefixSearch(DictNode* root, const std::string& prefix,
 /* 保存词典到文件（中序遍历，字母序） */
 int saveToFile(DictNode* root, const char* filename);
 
-/* 从文件加载词典 */
+/* 从文件加载：空树直接构建平衡 BST；已有树按文件顺序合并。
+   忽略大小写的重复词条保留首次拼写，以最后一条词性、释义为准。 */
 DictNode* loadFromFile(DictNode* root, const char* filename);
 
 /* 释放整棵 BST 的内存 */

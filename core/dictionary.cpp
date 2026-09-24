@@ -1,11 +1,12 @@
 #include "dictionary.h"
 #include <fstream>
+#include <filesystem>
 #include <vector>
 #include <algorithm>
+#include <utility>
 #include <ctime>
 #include <cstdlib>
 #include <cctype>
-#include <sys/stat.h>
 
 /* ===== 数据目录搜索路径 ===== */
 static std::vector<std::string> s_dataDirs;
@@ -15,10 +16,15 @@ void setDataSearchDirs(const std::vector<std::string>& dirs)
     s_dataDirs = dirs;
 }
 
+static std::filesystem::path nativePath(const std::string& utf8Path)
+{
+    return std::filesystem::u8path(utf8Path);
+}
+
 static bool fileExists(const std::string& path)
 {
-    struct stat st;
-    return stat(path.c_str(), &st) == 0;
+    std::error_code error;
+    return std::filesystem::is_regular_file(nativePath(path), error);
 }
 
 /* 在搜索路径中查找 filename，返回第一个找到的完整路径；找不到则返回原名 */
@@ -211,7 +217,7 @@ static void saveNode(std::ofstream& file, DictNode* node)
 int saveToFile(DictNode* root, const char* filename)
 {
     std::string path = resolveDataPath(filename);
-    std::ofstream file(path);
+    std::ofstream file(nativePath(path));
     if (!file.is_open()) {
         return 0;
     }
@@ -219,54 +225,42 @@ int saveToFile(DictNode* root, const char* filename)
     return 1;
 }
 
-// 内部插入（不打印信息，供 loadFromFile 使用）
-static DictNode* insertWordSilent(DictNode* root, const std::string& word,
-                                   const std::string& pos, const std::string& meaning)
+struct DictEntry {
+    std::string word;
+    std::string pos;
+    std::string meaning;
+};
+
+// 从有序、去重的词条区间 [begin, end) 直接建树，左右子树规模最多相差 1。
+static DictNode* buildBalancedTree(const std::vector<DictEntry>& entries,
+                                 size_t begin, size_t end)
 {
-    if (root == nullptr) {
-        return new DictNode(word, pos, meaning);
-    }
-    int cmp = cmpIgnoreCase(word, root->word);
-    if (cmp < 0)
-        root->left = insertWordSilent(root->left, word, pos, meaning);
-    else if (cmp > 0)
-        root->right = insertWordSilent(root->right, word, pos, meaning);
-    else {
-        root->pos = pos;
-        root->meaning = meaning;
-    }
-    return root;
+    if (begin == end) return nullptr;
+    size_t mid = begin + (end - begin) / 2;
+    const auto& entry = entries[mid];
+    DictNode* node = new DictNode(entry.word, entry.pos, entry.meaning);
+    node->left = buildBalancedTree(entries, begin, mid);
+    node->right = buildBalancedTree(entries, mid + 1, end);
+    return node;
 }
 
 DictNode* loadFromFile(DictNode* root, const char* filename)
 {
     std::string path = resolveDataPath(filename);
-    std::ifstream file(path);
+    std::ifstream file(nativePath(path));
     if (!file.is_open()) return root;
 
-    // 读入所有行
-    std::vector<std::string> lines;
+    // 先解析有效词条；文本内容保持原有字节编码。
+    std::vector<DictEntry> entries;
     std::string line;
     while (std::getline(file, line)) {
         if (!line.empty() && line.back() == '\r')
             line.pop_back();
-        if (line.empty()) continue;
-        lines.push_back(line);
-    }
-    file.close();
-
-    // Fisher-Yates 洗牌：避免有序输入导致 BST 退化
-    for (int i = static_cast<int>(lines.size()) - 1; i > 0; i--) {
-        int j = rand() % (i + 1);
-        std::swap(lines[i], lines[j]);
-    }
-
-    for (const auto& ln : lines) {
-        size_t delimPos = ln.find("  ");
+        size_t delimPos = line.find("  ");
         if (delimPos == std::string::npos) continue;
 
-        std::string word = ln.substr(0, delimPos);
-        std::string rest = ln.substr(delimPos + 2);
+        std::string word = line.substr(0, delimPos);
+        std::string rest = line.substr(delimPos + 2);
 
         size_t dotPos = rest.find('.');
         if (dotPos == std::string::npos || dotPos + 1 >= rest.size()) continue;
@@ -274,10 +268,37 @@ DictNode* loadFromFile(DictNode* root, const char* filename)
         std::string pos = rest.substr(0, dotPos + 1);  // 含 '.'
         std::string meaning = rest.substr(dotPos + 1);
 
-        root = insertWordSilent(root, word, pos, meaning);
+        entries.push_back({word, pos, meaning});
+    }
+    file.close();
+
+    // 保留加载到已有树时的合并行为，以及已有节点指针的有效性。
+    if (root != nullptr) {
+        for (const auto& entry : entries)
+            root = insertWord(root, entry.word, entry.pos, entry.meaning);
+        return root;
     }
 
-    return root;
+    auto less = [](const DictEntry& a, const DictEntry& b) {
+        return cmpIgnoreCase(a.word, b.word) < 0;
+    };
+    // 程序保存的词库已经有序；外部乱序词库才需要排序。
+    if (!std::is_sorted(entries.begin(), entries.end(), less))
+        std::stable_sort(entries.begin(), entries.end(), less);
+
+    // 稳定排序保留同名单词的文件顺序：沿用首次拼写，最后一条释义生效。
+    size_t uniqueCount = 0;
+    for (size_t i = 0; i < entries.size(); ++i) {
+        if (uniqueCount > 0 &&
+            cmpIgnoreCase(entries[uniqueCount - 1].word, entries[i].word) == 0) {
+            entries[uniqueCount - 1].pos = std::move(entries[i].pos);
+            entries[uniqueCount - 1].meaning = std::move(entries[i].meaning);
+        } else {
+            if (uniqueCount != i) entries[uniqueCount] = std::move(entries[i]);
+            ++uniqueCount;
+        }
+    }
+    return buildBalancedTree(entries, 0, uniqueCount);
 }
 
 // ================================================================
@@ -393,7 +414,7 @@ void recordWrong(const std::string& word)
     WrongWord wrongs[MAX_WRONG];
     int count = 0;
 
-    std::ifstream fin(resolveDataPath(WRONG_FILE));
+    std::ifstream fin(nativePath(resolveDataPath(WRONG_FILE)));
     if (fin.is_open()) {
         std::string w;
         int c;
@@ -424,7 +445,7 @@ void recordWrong(const std::string& word)
         }
     }
 
-    std::ofstream fout(resolveDataPath(WRONG_FILE));
+    std::ofstream fout(nativePath(resolveDataPath(WRONG_FILE)));
     if (fout.is_open()) {
         for (int i = 0; i < count; i++) {
             fout << wrongs[i].word << " " << wrongs[i].count << "\n";
@@ -437,7 +458,7 @@ void removeWrongWord(const std::string& word)
     WrongWord wrongs[MAX_WRONG];
     int count = 0;
 
-    std::ifstream fin(resolveDataPath(WRONG_FILE));
+    std::ifstream fin(nativePath(resolveDataPath(WRONG_FILE)));
     if (fin.is_open()) {
         std::string w;
         int c;
@@ -450,7 +471,7 @@ void removeWrongWord(const std::string& word)
     }
 
     // 过滤掉目标单词
-    std::ofstream fout(resolveDataPath(WRONG_FILE));
+    std::ofstream fout(nativePath(resolveDataPath(WRONG_FILE)));
     if (fout.is_open()) {
         for (int i = 0; i < count; i++) {
             if (wrongs[i].word != word) {
@@ -465,7 +486,7 @@ void showWrongWords(void (*callback)(const WrongWord*, int rank, int total))
     WrongWord wrongs[MAX_WRONG];
     int count = 0;
 
-    std::ifstream fin(resolveDataPath(WRONG_FILE));
+    std::ifstream fin(nativePath(resolveDataPath(WRONG_FILE)));
     if (!fin.is_open()) return;
     std::string w;
     int c;
@@ -488,7 +509,7 @@ void showWrongWords(void (*callback)(const WrongWord*, int rank, int total))
 
 int countWrongWords()
 {
-    std::ifstream fin(resolveDataPath(WRONG_FILE));
+    std::ifstream fin(nativePath(resolveDataPath(WRONG_FILE)));
     if (!fin.is_open()) return 0;
     int count = 0;
     std::string line;
@@ -503,7 +524,7 @@ DictNode** loadWrongWordsToArray(DictNode* root, int* count)
     WrongWord wrongs[MAX_WRONG];
     int n = 0;
 
-    std::ifstream fin(resolveDataPath(WRONG_FILE));
+    std::ifstream fin(nativePath(resolveDataPath(WRONG_FILE)));
     if (!fin.is_open()) { *count = 0; return nullptr; }
     std::string w;
     int c;
@@ -530,7 +551,7 @@ DictNode** loadWrongWordsToArray(DictNode* root, int* count)
 
 void clearWrongWords()
 {
-    std::ofstream fout(resolveDataPath(WRONG_FILE), std::ios::trunc);
+    std::ofstream fout(nativePath(resolveDataPath(WRONG_FILE)), std::ios::trunc);
     fout.close();
 }
 
@@ -559,7 +580,7 @@ void saveQuizRecord(int mode, int correct, int total)
     // 读取已有记录
     std::vector<QuizRecord> records;
     std::string path = resolveDataPath(QUIZ_HISTORY_FILE);
-    std::ifstream fin(path);
+    std::ifstream fin(nativePath(path));
     if (fin.is_open()) {
         std::string line;
         while (std::getline(fin, line)) {
@@ -599,7 +620,7 @@ void saveQuizRecord(int mode, int correct, int total)
     }
 
     // 写回文件
-    std::ofstream fout(path);
+    std::ofstream fout(nativePath(path));
     if (fout.is_open()) {
         for (const auto& r : records) {
             fout << r.timestamp << "|" << r.mode << "|"
@@ -611,7 +632,7 @@ void saveQuizRecord(int mode, int correct, int total)
 std::vector<QuizRecord> loadQuizHistory()
 {
     std::vector<QuizRecord> records;
-    std::ifstream fin(resolveDataPath(QUIZ_HISTORY_FILE));
+    std::ifstream fin(nativePath(resolveDataPath(QUIZ_HISTORY_FILE)));
     if (!fin.is_open()) return records;
 
     std::string line;
