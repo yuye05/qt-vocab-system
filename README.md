@@ -25,6 +25,32 @@
 
 普通测验结果页有错题时显示“错题再练”。再练保持原测验模式，覆盖本轮全部错题，选项仍从本轮完整词库快照生成；完成后保存一条新的测验记录。再练答对保留生词，再次答错增加错误次数。后续可继续重练新一轮错题，或返回设置重新选择模式和题量。
 
+### 学习与复习流程
+
+```mermaid
+flowchart TD
+    accTitle: 词汇学习与复习流程
+    accDescr: 普通测验和错题再练答错会累计生词。再练答对保留生词，专项测验完成后移除答对词，卡片标记掌握时移除该词。
+    subgraph Practice["普通测验与错题再练"]
+        direction LR
+        Quiz["普通测验"] -->|完成| Result["结果页<br/>记录本轮成绩"]
+        Result -->|有错题| Retry["错题再练<br/>答对仍保留生词"]
+        Retry -->|完成一轮| Result
+    end
+    Practice -->|答错：收录或累计次数| Book["生词本"]
+    Book --> Special["专项测验"]
+    Book --> Cards["卡片复习"]
+    Special -->|本轮完成：移除答对词| Remove["移除生词"]
+    Cards -->|标记已掌握| Remove
+
+    classDef default fill:#F5F0E8,stroke:#8B7E6A,color:#2C2416
+    classDef retry fill:#F8E2D6,stroke:#C66B3D,color:#7B3F23
+    classDef mastered fill:#EDF2E8,stroke:#606C38,color:#3D4829
+    class Retry retry
+    class Remove mastered
+    style Practice fill:#FFFBF7,stroke:#D9CEBB,color:#2C2416
+```
+
 | 按键 | 测验页 | 卡片页 |
 | --- | --- | --- |
 | `1`～`4` | 选择对应选项 | — |
