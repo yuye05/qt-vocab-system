@@ -7,6 +7,7 @@
 #include <QKeyEvent>
 #include <QMessageBox>
 #include <QEvent>
+#include <algorithm>
 #include <cstdlib>
 #include <string>
 
@@ -372,7 +373,7 @@ void QuizWidget::onCancel()
 // 键盘快捷键
 // ================================================================
 
-bool QuizWidget::handleKey(QKeyEvent* event)
+bool QuizWidget::handleKey(QKeyEvent* event, QObject* source)
 {
     const int key = event->key();
     const int page = m_pages->currentIndex();
@@ -399,7 +400,8 @@ bool QuizWidget::handleKey(QKeyEvent* event)
     } else if (page == 2 && (key == Qt::Key_Escape || key == Qt::Key_Return ||
                             key == Qt::Key_Enter || key == Qt::Key_Space)) {
         if (!event->isAutoRepeat()) {
-            if (key != Qt::Key_Escape && m_wrongRetryBtn->isVisible() && m_wrongRetryBtn->hasFocus())
+            if (key != Qt::Key_Escape && m_wrongRetryBtn->isVisible() &&
+                (source == m_wrongRetryBtn || m_wrongRetryBtn->hasFocus()))
                 onRetryWrong();
             else onCancel();
         }
@@ -410,7 +412,7 @@ bool QuizWidget::handleKey(QKeyEvent* event)
 
 bool QuizWidget::eventFilter(QObject* object, QEvent* event)
 {
-    if (event->type() == QEvent::KeyPress && handleKey(static_cast<QKeyEvent*>(event))) return true;
+    if (event->type() == QEvent::KeyPress && handleKey(static_cast<QKeyEvent*>(event), object)) return true;
     return QWidget::eventFilter(object, event);
 }
 

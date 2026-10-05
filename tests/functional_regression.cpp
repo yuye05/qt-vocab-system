@@ -60,6 +60,31 @@ static void resetFiles(const QString& directory)
     put(QDir(directory).filePath(QUIZ_HISTORY_FILE), "");
 }
 
+static std::string gradeAndContinue(QuizWidget& widget, const std::vector<WordEntry>& snapshot,
+                                    int mode, bool correct)
+{
+    const std::string target = mode == 1
+        ? widget.findChild<QLabel*>("quizQuestion")->text().toStdString() : answer(&widget, snapshot);
+    if (mode == 0) {
+        auto* input = widget.findChild<QLineEdit*>("quizSpellingInput");
+        input->setText(correct ? QString::fromStdString(target) : "incorrect");
+        QTest::keyClick(input, Qt::Key_Return);
+    } else {
+        QPushButton* selected = nullptr;
+        for (auto* option : widget.findChildren<QPushButton*>("quizOptionBtn")) {
+            if (!option->isVisible()) continue;
+            const int index = option->property("optIndex").toInt();
+            if ((snapshot[index].word == target) == correct) { selected = option; break; }
+        }
+        require(selected, "required choice not available");
+        QTest::mouseClick(selected, Qt::LeftButton);
+    }
+    require(widget.findChild<QLabel*>("quizFeedback")->text().contains(correct ? "回答正确" : "回答错误"),
+            "answer not graded as expected");
+    QTest::keyClick(widget.findChild<QPushButton*>("quizActionBtn"), Qt::Key_Space);
+    return target;
+}
+
 static void addWord(DictWidget& widget, const QString& word, bool expectFailure = false)
 {
     bool failed = false;
@@ -171,6 +196,83 @@ int main(int argc, char** argv)
             freeTree(root);
         }
         std::cout << "PASS: 1/2/3-word choice modes start and cancel\n";
+
+        for (int mode = 0; mode < 3; ++mode) {
+            resetFiles(directory);
+            root = nullptr;
+            for (const auto* word : {"apple", "banana", "cherry", "date", "elder", "fig"})
+                root = insertWord(root, word, "n.", std::string("词义 ") + word);
+            const auto pool = wordSnapshot(root);
+            {
+                QuizWidget widget;
+                widget.setRoot(&root);
+                widget.resize(700, 650);
+                widget.show();
+                chooseMode(&widget, mode);
+                QTest::mouseClick(button(&widget, "5"), Qt::LeftButton);
+                invoke(&widget, "onStartQuiz");
+                QSet<QString> errors;
+                for (int i = 0; i < 5; ++i) {
+                    const auto word = gradeAndContinue(widget, pool, mode, i >= 2);
+                    if (i < 2) errors.insert(QString::fromStdString(word));
+                }
+                auto* pages = widget.findChild<QStackedWidget*>("quizPageStack");
+                auto* retry = widget.findChild<QPushButton*>("quizWrongRetryBtn");
+                require(pages->currentIndex() == 2 && retry && retry->isVisible(), "wrong retry entry missing");
+                require(widget.findChild<QLabel*>("quizScoreLabel")->text().contains("3 / 5"), "initial score wrong");
+                auto history = loadQuizHistory();
+                require(history.size() == 1 && history[0].mode == mode && history[0].total == 5, "initial history wrong");
+                if (mode == 0) capture(widget, "wrong-retry-result.png");
+
+                // 修改实时词典后，再练仍应使用原始完整快照，而非只用两个错词出选项。
+                for (const auto& entry : pool)
+                    if (!errors.contains(QString::fromStdString(entry.word))) root = deleteWord(root, entry.word);
+                retry->setFocus();
+                QTest::keyClick(retry, Qt::Key_Return);
+                require(pages->currentIndex() == 1 && widget.findChild<QLabel*>("quizProgressLabel")->text().contains("1/2"),
+                        "wrong retry used original question count");
+                QString failedAgain;
+                QSet<QString> retried;
+                for (int i = 0; i < 2; ++i) {
+                    if (mode != 0) {
+                        int visible = 0;
+                        for (auto* option : widget.findChildren<QPushButton*>("quizOptionBtn")) visible += option->isVisible();
+                        require(visible == 4, "wrong retry lost full snapshot distractors");
+                    }
+                    const QString target = QString::fromStdString(gradeAndContinue(widget, pool, mode, i == 0));
+                    require(errors.contains(target) && !retried.contains(target), "wrong retry included correct/repeated question");
+                    retried.insert(target);
+                    if (i == 1) failedAgain = target;
+                }
+                require(retried == errors, "wrong retry did not cover all mistakes");
+                require(widget.findChild<QLabel*>("quizScoreLabel")->text().contains("1 / 2"), "retry score wrong");
+                history = loadQuizHistory();
+                require(history.size() == 2 && history[0].mode == mode && history[0].total == 2 && history[0].correct == 1,
+                        "retry did not create one new history record");
+                std::vector<WrongWord> wrong;
+                require(loadWrongWords(wrong) && wrong.size() == 2, "correct retry removed a wrong word");
+                for (const auto& item : wrong)
+                    require(item.count == (QString::fromStdString(item.word) == failedAgain ? 2 : 1), "retry error count wrong");
+
+                retry->setFocus();
+                QTest::keyClick(retry, Qt::Key_Space);
+                require(widget.findChild<QLabel*>("quizProgressLabel")->text().contains("1/1"), "chained retry did not use latest errors");
+                auto* focused = mode == 0 ? static_cast<QWidget*>(widget.findChild<QLineEdit*>("quizSpellingInput"))
+                    : static_cast<QWidget*>(widget.findChildren<QPushButton*>("quizOptionBtn").front());
+                QTest::keyClick(focused, Qt::Key_Escape);
+                require(pages->currentIndex() == 0 && countWrongWords() == 2 && loadQuizHistory().size() == 2,
+                        "canceled retry changed wrong words/history");
+                invoke(&widget, "onStartQuiz");
+                require(widget.findChild<QLabel*>("quizProgressLabel")->text().contains("1/2"), "normal start reused old snapshot");
+                gradeAndContinue(widget, wordSnapshot(root), mode, true);
+                gradeAndContinue(widget, wordSnapshot(root), mode, true);
+                require(!retry->isVisible(), "perfect result showed wrong retry");
+                invoke(&widget, "onRetryWrong");
+                require(pages->currentIndex() == 2 && loadQuizHistory().size() == 3, "empty retry started or duplicated history");
+            }
+            freeTree(root);
+        }
+        std::cout << "PASS: all-mode wrong retry, full snapshot choices, retained words, counts, history and keyboard\n";
 
         resetFiles(directory);
         root = nullptr;

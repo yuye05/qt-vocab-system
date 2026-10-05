@@ -33,7 +33,7 @@ private:
     void checkChoiceAnswer(int clickedOptIdx);
     void setupChoiceOptions(int wordIdx);
     void showResult();
-    bool handleKey(QKeyEvent* event);
+    bool handleKey(QKeyEvent* event, QObject* source = nullptr);
     bool eventFilter(QObject* object, QEvent* event) override;
 
     // 外部数据

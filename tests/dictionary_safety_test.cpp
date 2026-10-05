@@ -4,6 +4,7 @@
 #include <QFile>
 #include <QTemporaryDir>
 #include <algorithm>
+#include <cstdlib>
 #include <iostream>
 #include <stdexcept>
 #include <set>
@@ -114,6 +115,35 @@ int main(int argc, char** argv)
         }
         require(pickOptions(-1, words).empty() && pickOptions(0, {}).empty(), "invalid option boundary failed");
         std::cout << "PASS: finite small-pool choices, unique meanings, equivalent spelling\n";
+
+        const std::vector<WordEntry> mixed = {
+            {"apple", "n.", "苹果"}, {"banana", "n.", "香蕉"},
+            {"cherry", "n.", "樱桃"}, {"date", "n.", "枣"},
+            {"pear", "n.", "香蕉"}, {"run", "v.", "跑"},
+            {"eat", "v.", "吃"}, {"green", "adj.", "绿色的"}};
+        const std::vector<WordEntry> fewNouns = {
+            {"apple", "n.", "苹果"}, {"pear", "n.", "苹果"},
+            {"banana", "n.", "香蕉"}, {"eat", "v.", "吃"}, {"green", "adj.", "绿色的"}};
+        for (int seed = 0; seed < 16; ++seed) {
+            std::srand(seed);
+            auto options = pickOptions(0, mixed);
+            require(options.size() == 4, "same-POS candidates did not fill choices");
+            std::set<std::pair<std::string, std::string>> meanings;
+            std::set<std::string> selectedWords;
+            for (int option : options) {
+                require(mixed[option].pos == "n.", "different POS chosen before sufficient same-POS candidates");
+                require(meanings.emplace(mixed[option].pos, mixed[option].meaning).second,
+                        "same-POS choices repeated a meaning");
+                require(selectedWords.insert(mixed[option].word).second, "choice word repeated");
+            }
+            options = pickOptions(0, fewNouns);
+            require(options.size() == 4 && std::find(options.begin(), options.end(), 2) != options.end(),
+                    "same-POS candidate not retained during fallback");
+            require(std::find(options.begin(), options.end(), 1) == options.end(), "equivalent fallback distractor included");
+            require(std::find(options.begin(), options.end(), 3) != options.end() &&
+                    std::find(options.begin(), options.end(), 4) != options.end(), "other POS did not fill remaining choices");
+        }
+        std::cout << "PASS: same-POS preference, distinct meanings, finite fallback\n";
 
         root = insertWord(nullptr, "apple", "n.", "苹果");
         const auto snapshot = wordSnapshot(root);
