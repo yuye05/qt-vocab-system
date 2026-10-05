@@ -152,17 +152,22 @@ std::vector<int> shuffledIndices(int total)
     return indices;
 }
 
-// 候选有限遍历：不足四项也会结束，并排除同释义干扰项。
+// 先选同词性的干扰项，不足时补其他词性；候选有限遍历，排除同释义选项。
 std::vector<int> pickOptions(int correctIdx, const std::vector<WordEntry>& words)
 {
     if (correctIdx < 0 || correctIdx >= static_cast<int>(words.size())) return {};
     std::vector<int> options{correctIdx};
-    for (int candidate : shuffledIndices(static_cast<int>(words.size()))) {
-        bool duplicate = std::any_of(options.begin(), options.end(), [&](int chosen) {
-            return words[candidate].word == words[chosen].word ||
-                   equivalentMeaning(words[candidate], words[chosen]);
-        });
-        if (!duplicate) options.push_back(candidate);
+    const auto candidates = shuffledIndices(static_cast<int>(words.size()));
+    for (bool samePOS : {true, false}) {
+        for (int candidate : candidates) {
+            if ((words[candidate].pos == words[correctIdx].pos) != samePOS) continue;
+            bool duplicate = std::any_of(options.begin(), options.end(), [&](int chosen) {
+                return words[candidate].word == words[chosen].word ||
+                       equivalentMeaning(words[candidate], words[chosen]);
+            });
+            if (!duplicate) options.push_back(candidate);
+            if (options.size() == 4) break;
+        }
         if (options.size() == 4) break;
     }
     const auto order = shuffledIndices(static_cast<int>(options.size()));

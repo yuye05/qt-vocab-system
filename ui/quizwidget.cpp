@@ -277,16 +277,24 @@ void QuizWidget::buildResultPage()
     btnRow->setSpacing(16);
     btnRow->addStretch();
 
+    m_wrongRetryBtn = new QPushButton("错题再练");
+    m_wrongRetryBtn->setObjectName("quizWrongRetryBtn");
+    m_wrongRetryBtn->setFixedSize(140, 44);
+    m_wrongRetryBtn->hide();
+    m_wrongRetryBtn->installEventFilter(this);
+    connect(m_wrongRetryBtn, &QPushButton::clicked, this, &QuizWidget::onRetryWrong);
+
     QPushButton* retryBtn = new QPushButton("再来一轮");
     retryBtn->setObjectName("quizRetryBtn");
     retryBtn->setFixedSize(140, 44);
-    connect(retryBtn, &QPushButton::clicked, [this]() { m_pages->setCurrentIndex(0); });
+    connect(retryBtn, &QPushButton::clicked, this, &QuizWidget::onCancel);
 
     QPushButton* backBtn = new QPushButton("返回设置");
     backBtn->setObjectName("quizBackBtn");
     backBtn->setFixedSize(140, 44);
-    connect(backBtn, &QPushButton::clicked, [this]() { m_pages->setCurrentIndex(0); });
+    connect(backBtn, &QPushButton::clicked, this, &QuizWidget::onCancel);
 
+    btnRow->addWidget(m_wrongRetryBtn);
     btnRow->addWidget(retryBtn);
     btnRow->addWidget(backBtn);
     btnRow->addStretch();
@@ -321,6 +329,12 @@ void QuizWidget::onStartQuiz()
         return;
     }
     startQuiz();
+}
+
+void QuizWidget::onRetryWrong()
+{
+    if (m_pages->currentIndex() != 2 || m_wrongList.empty()) return;
+    startQuiz(true);
 }
 
 void QuizWidget::onSubmitOrNext()
@@ -384,7 +398,11 @@ bool QuizWidget::handleKey(QKeyEvent* event)
         }
     } else if (page == 2 && (key == Qt::Key_Escape || key == Qt::Key_Return ||
                             key == Qt::Key_Enter || key == Qt::Key_Space)) {
-        if (!event->isAutoRepeat()) m_pages->setCurrentIndex(0);
+        if (!event->isAutoRepeat()) {
+            if (key != Qt::Key_Escape && m_wrongRetryBtn->isVisible() && m_wrongRetryBtn->hasFocus())
+                onRetryWrong();
+            else onCancel();
+        }
         return true;
     }
     return false;
@@ -405,18 +423,27 @@ void QuizWidget::keyPressEvent(QKeyEvent* event)
 // 测验流程
 // ================================================================
 
-void QuizWidget::startQuiz()
+void QuizWidget::startQuiz(bool wrongOnly)
 {
-    m_words = wordSnapshot(*m_dictRoot);
-    m_dictTotal = static_cast<int>(m_words.size());
-    if (m_dictTotal == 0) return;
-
-    // 洗牌生成题序
-    m_quizIndices = shuffledIndices(m_dictTotal);
+    if (wrongOnly) {
+        // 使用本轮完整快照出选项，只把错题对应的索引作为新的题目。
+        m_quizIndices.clear();
+        for (int i : shuffledIndices(static_cast<int>(m_wrongList.size()))) {
+            const auto found = std::find_if(m_words.begin(), m_words.end(), [&](const WordEntry& word) {
+                return word.word == m_wrongList[i].word;
+            });
+            if (found != m_words.end())
+                m_quizIndices.push_back(static_cast<int>(found - m_words.begin()));
+        }
+    } else {
+        m_words = wordSnapshot(*m_dictRoot);
+        m_dictTotal = static_cast<int>(m_words.size());
+        m_quizIndices = shuffledIndices(m_dictTotal);
+        m_quizIndices.resize(std::min(m_selectedCount, m_dictTotal));
+    }
+    if (m_quizIndices.empty()) return;
 
     // 重置状态
-    int actualCount = std::min(m_selectedCount, m_dictTotal);
-    m_quizIndices.resize(actualCount);
     m_currentQ     = 0;
     m_correctCount = 0;
     m_answered     = false;
@@ -610,9 +637,12 @@ void QuizWidget::showResult()
     if (!saveQuizRecord(m_selectedMode, m_correctCount, total))
         QMessageBox::warning(this, "历史未保存", QString::fromStdString(dataError()));
 
-    // 释放数组
-    m_words.clear();
-    m_dictTotal = 0;
+    // 有错题时保留完整词库快照，供再练出题及生成干扰项。
+    m_wrongRetryBtn->setVisible(!m_wrongList.empty());
+    if (m_wrongList.empty()) {
+        m_words.clear();
+        m_dictTotal = 0;
+    }
 
     int pct = (total > 0) ? (m_correctCount * 100 / total) : 0;
 

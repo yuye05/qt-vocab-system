@@ -489,7 +489,7 @@ QScrollBar::sub-line:vertical {
 }
 
 /* 结果页按钮 */
-#quizRetryBtn {
+#quizRetryBtn, #quizWrongRetryBtn {
     background-color: #C66B3D;
     color: #FFFFFF;
     border: none;
@@ -498,7 +498,7 @@ QScrollBar::sub-line:vertical {
     font-weight: bold;
 }
 
-#quizRetryBtn:hover {
+#quizRetryBtn:hover, #quizWrongRetryBtn:hover {
     background-color: #B05A32;
 }
 

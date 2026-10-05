@@ -19,6 +19,7 @@ private slots:
     void onModeBtn(int id);
     void onCountBtn(int id);
     void onStartQuiz();
+    void onRetryWrong();
     void onSubmitOrNext();
     void onCancel();
 
@@ -26,7 +27,7 @@ private:
     void buildSetupPage();
     void buildQuizPage();
     void buildResultPage();
-    void startQuiz();
+    void startQuiz(bool wrongOnly = false);
     void showQuestion();
     void checkSpellingAnswer();
     void checkChoiceAnswer(int clickedOptIdx);
@@ -73,6 +74,7 @@ private:
     // 结果页
     QLabel*     m_scoreLabel     = nullptr;
     QWidget*    m_wrongContainer = nullptr;
+    QPushButton* m_wrongRetryBtn = nullptr;
 };
 
 // 进度条（QPainter 自绘，圆角，与 Organic 风格一致）
