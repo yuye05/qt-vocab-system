@@ -12,7 +12,6 @@ class QuizWidget : public QWidget {
     Q_OBJECT
 public:
     explicit QuizWidget(QWidget* parent = nullptr);
-    ~QuizWidget() override;
     void setRoot(DictNode** rootPtr);
     void keyPressEvent(QKeyEvent* event) override;
 
@@ -22,7 +21,6 @@ private slots:
     void onStartQuiz();
     void onSubmitOrNext();
     void onCancel();
-    void onSpellingReturn();
 
 private:
     void buildSetupPage();
@@ -34,10 +32,12 @@ private:
     void checkChoiceAnswer(int clickedOptIdx);
     void setupChoiceOptions(int wordIdx);
     void showResult();
+    bool handleKey(QKeyEvent* event);
+    bool eventFilter(QObject* object, QEvent* event) override;
 
     // 外部数据
     DictNode**  m_dictRoot = nullptr;
-    DictNode**  m_dictArr  = nullptr;
+    std::vector<WordEntry> m_words;
     int         m_dictTotal = 0;
 
     // 测验状态
@@ -47,7 +47,6 @@ private:
     int         m_correctCount  = 0;
     bool        m_answered      = false;
     std::vector<int> m_quizIndices;
-    std::vector<bool> m_results;
 
     // 错题记录
     struct WrongAnsInfo {

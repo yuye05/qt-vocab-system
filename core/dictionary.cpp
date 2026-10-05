@@ -1,42 +1,139 @@
 #include "dictionary.h"
-#include <fstream>
-#include <filesystem>
-#include <vector>
+#include <QDateTime>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QSaveFile>
+#include <QStringDecoder>
 #include <algorithm>
-#include <utility>
-#include <ctime>
+#include <charconv>
+#include <climits>
 #include <cstdlib>
 #include <cctype>
+#include <sstream>
+#include <utility>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
-/* ===== 数据目录搜索路径 ===== */
 static std::vector<std::string> s_dataDirs;
+static std::string s_error;
+
+const std::string& dataError() { return s_error; }
 
 void setDataSearchDirs(const std::vector<std::string>& dirs)
 {
     s_dataDirs = dirs;
 }
 
-static std::filesystem::path nativePath(const std::string& utf8Path)
-{
-    return std::filesystem::u8path(utf8Path);
-}
-
-static bool fileExists(const std::string& path)
-{
-    std::error_code error;
-    return std::filesystem::is_regular_file(nativePath(path), error);
-}
-
-/* 在搜索路径中查找 filename，返回第一个找到的完整路径；找不到则返回原名 */
 std::string resolveDataPath(const char* filename)
 {
-    /* 1. 先检查搜索路径列表 */
+    const QString name = QString::fromUtf8(filename);
+    if (QFileInfo(name).isAbsolute()) return filename;
     for (const auto& dir : s_dataDirs) {
-        std::string full = dir + "/" + filename;
-        if (fileExists(full)) return full;
+        const QString path = QDir(QString::fromStdString(dir)).filePath(name);
+        if (QFileInfo::exists(path)) return path.toStdString();
     }
-    /* 2. 回退到当前工作目录（原名） */
-    return std::string(filename);
+    return s_dataDirs.empty() ? std::string(filename)
+        : QDir(QString::fromStdString(s_dataDirs.front())).filePath(name).toStdString();
+}
+
+static bool readText(const std::string& path, std::string& text)
+{
+    QFile file(QString::fromStdString(path));
+    if (!file.open(QIODevice::ReadOnly)) {
+        s_error = path + ": " + file.errorString().toStdString();
+        return false;
+    }
+    const QByteArray bytes = file.readAll();
+    if (file.error() != QFileDevice::NoError) {
+        s_error = path + ": " + file.errorString().toStdString();
+        return false;
+    }
+    QStringDecoder utf8(QStringDecoder::Utf8, QStringConverter::Flag::Stateless);
+    QString decoded = utf8(bytes);
+    if (utf8.hasError()) {
+        if (bytes.startsWith("# qt-vocab UTF-8 TSV v1") || bytes.startsWith("\xef\xbb\xbf")) {
+            s_error = path + ": UTF-8 文件编码损坏，原文件未改动。";
+            return false;
+        }
+        // 旧 Windows 发布包使用 GBK；迁移时显式解码，不依赖本机 ACP。
+#ifdef _WIN32
+        int size = MultiByteToWideChar(936, MB_ERR_INVALID_CHARS, bytes.constData(), bytes.size(), nullptr, 0);
+        if (size > 0) {
+            std::wstring wide(size, L'\0');
+            MultiByteToWideChar(936, MB_ERR_INVALID_CHARS, bytes.constData(), bytes.size(), wide.data(), size);
+            decoded = QString::fromStdWString(wide);
+        } else
+#else
+        QStringDecoder gbk("GB18030", QStringConverter::Flag::Stateless);
+        if (gbk.isValid()) {
+            decoded = gbk(bytes);
+            if (gbk.hasError()) decoded.clear();
+        } else decoded.clear();
+        if (decoded.isEmpty())
+#endif
+        {
+            s_error = path + ": 无法识别 UTF-8 / 旧 GBK 编码，原文件未改动。";
+            return false;
+        }
+    }
+    if (decoded.startsWith(QChar(0xfeff))) decoded.remove(0, 1);
+    text = decoded.toStdString();
+    return true;
+}
+
+static bool writeText(const std::string& path, const std::string& text)
+{
+    QSaveFile file(QString::fromStdString(path));
+    file.setDirectWriteFallback(false);
+    if (!file.open(QIODevice::WriteOnly) ||
+        file.write(text.data(), static_cast<qint64>(text.size())) != static_cast<qint64>(text.size()) ||
+        !file.commit()) {
+        s_error = path + ": " + file.errorString().toStdString();
+        return false;
+    }
+    return true;
+}
+
+bool initializeDataDirectory(const std::string& directory,
+                             const std::vector<std::string>& legacyDirectories)
+{
+    s_error.clear();
+    setDataSearchDirs({directory});
+    if (!QDir().mkpath(QString::fromStdString(directory))) {
+        s_error = "无法创建用户数据目录：" + directory;
+        return false;
+    }
+    const std::string marker = QDir(QString::fromStdString(directory)).filePath(".initialized").toStdString();
+    const bool firstUse = !QFileInfo::exists(QString::fromStdString(marker));
+    std::vector<std::pair<std::string, std::string>> pending;
+    for (const char* name : {DICT_FILE, WRONG_FILE, QUIZ_HISTORY_FILE}) {
+        const std::string destination = resolveDataPath(name);
+        if (QFileInfo::exists(QString::fromStdString(destination))) continue;
+        std::string text;
+        bool found = false;
+        for (const auto& legacy : firstUse || std::string(name) == DICT_FILE
+                ? legacyDirectories : std::vector<std::string>{}) {
+            const std::string source = QDir(QString::fromStdString(legacy)).filePath(name).toStdString();
+            if (!QFileInfo::exists(QString::fromStdString(source))) continue;
+            if (!readText(source, text)) return false;
+            found = true;
+            break;
+        }
+        if (!found && std::string(name) == DICT_FILE) {
+            s_error = "未找到初始词库，请在程序旁提供 words/dictionary.txt。";
+            return false;
+        }
+        pending.emplace_back(destination, text);
+    }
+    // 先读取全部待迁移文件；初始化标记仅在所有文件成功落盘后写入，失败可安全重试。
+    for (const auto& file : pending)
+        if (!writeText(file.first, file.second)) return false;
+    return !firstUse || writeText(marker, "initialized\n");
 }
 
 // ================================================================
@@ -55,26 +152,23 @@ std::vector<int> shuffledIndices(int total)
     return indices;
 }
 
-// 为选择题收集 4 个选项（1 正确 + 3 干扰）
-void pickOptions(int correctIdx, int total, int options[4])
+// 候选有限遍历：不足四项也会结束，并排除同释义干扰项。
+std::vector<int> pickOptions(int correctIdx, const std::vector<WordEntry>& words)
 {
-    options[0] = correctIdx;
-    int optCount = 1;
-    while (optCount < 4) {
-        int didx = rand() % total;
-        bool dup = false;
-        for (int i = 0; i < optCount; i++) {
-            if (options[i] == didx) { dup = true; break; }
-        }
-        if (!dup) options[optCount++] = didx;
+    if (correctIdx < 0 || correctIdx >= static_cast<int>(words.size())) return {};
+    std::vector<int> options{correctIdx};
+    for (int candidate : shuffledIndices(static_cast<int>(words.size()))) {
+        bool duplicate = std::any_of(options.begin(), options.end(), [&](int chosen) {
+            return words[candidate].word == words[chosen].word ||
+                   equivalentMeaning(words[candidate], words[chosen]);
+        });
+        if (!duplicate) options.push_back(candidate);
+        if (options.size() == 4) break;
     }
-    // Fisher-Yates 洗牌
-    for (int i = 3; i > 0; i--) {
-        int j = rand() % (i + 1);
-        int temp = options[i];
-        options[i] = options[j];
-        options[j] = temp;
-    }
+    const auto order = shuffledIndices(static_cast<int>(options.size()));
+    std::vector<int> shuffled;
+    for (int i : order) shuffled.push_back(options[i]);
+    return shuffled;
 }
 
 // ================================================================
@@ -134,17 +228,16 @@ static DictNode* findMin(DictNode* node)
 }
 
 // 删除节点（内部实现）
-static DictNode* deleteNode(DictNode* root, const std::string& word, int* found)
+static DictNode* deleteNode(DictNode* root, const std::string& word)
 {
     if (root == nullptr) return nullptr;
 
     int cmp = cmpIgnoreCase(word, root->word);
     if (cmp < 0) {
-        root->left = deleteNode(root->left, word, found);
+        root->left = deleteNode(root->left, word);
     } else if (cmp > 0) {
-        root->right = deleteNode(root->right, word, found);
+        root->right = deleteNode(root->right, word);
     } else {
-        *found = 1;
         if (root->left == nullptr) {
             DictNode* temp = root->right;
             delete root;
@@ -158,8 +251,7 @@ static DictNode* deleteNode(DictNode* root, const std::string& word, int* found)
             root->word = successor->word;
             root->pos = successor->pos;
             root->meaning = successor->meaning;
-            int dummy = 0;
-            root->right = deleteNode(root->right, successor->word, &dummy);
+            root->right = deleteNode(root->right, successor->word);
         }
     }
     return root;
@@ -167,9 +259,7 @@ static DictNode* deleteNode(DictNode* root, const std::string& word, int* found)
 
 DictNode* deleteWord(DictNode* root, const std::string& word)
 {
-    int found = 0;
-    root = deleteNode(root, word, &found);
-    return root;
+    return deleteNode(root, word);
 }
 
 // 中序遍历：通过回调函数输出每个节点
@@ -205,34 +295,71 @@ void prefixSearch(DictNode* root, const std::string& prefix,
 // 文件 I/O
 // ================================================================
 
-// 保存节点到文件（中序遍历递归写入）
-static void saveNode(std::ofstream& file, DictNode* node)
+static bool parseDictionary(const std::string& text, std::vector<WordEntry>& entries)
 {
-    if (node == nullptr) return;
-    saveNode(file, node->left);
-    file << node->word << "  " << node->pos << node->meaning << "\n";
-    saveNode(file, node->right);
+    std::istringstream input(text);
+    std::string line;
+    int number = 0;
+    bool valid = true;
+    while (std::getline(input, line)) {
+        ++number;
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.empty() || line == "# qt-vocab UTF-8 TSV v1") continue;
+        WordEntry entry;
+        size_t first = line.find('\t');
+        size_t second = first == std::string::npos ? std::string::npos : line.find('\t', first + 1);
+        if (first != std::string::npos && second != std::string::npos &&
+            line.find('\t', second + 1) == std::string::npos) {
+            entry = {line.substr(0, first), line.substr(first + 1, second - first - 1), line.substr(second + 1)};
+        } else if (first == std::string::npos) {
+            size_t delimiter = line.find("  ");
+            if (delimiter != std::string::npos) {
+                const std::string rest = line.substr(delimiter + 2);
+                size_t dot = rest.find('.');
+                if (dot != std::string::npos)
+                    entry = {line.substr(0, delimiter), rest.substr(0, dot + 1), rest.substr(dot + 1)};
+            }
+        }
+        if (entry.word.empty() || entry.word.find_first_of(" \t\r\n") != std::string::npos ||
+            entry.pos.empty() || entry.meaning.empty()) {
+            if (valid) s_error = "词库第 " + std::to_string(number) + " 行格式错误，原文件未改动。";
+            valid = false;
+            continue;
+        }
+        entries.push_back(std::move(entry));
+    }
+    return valid;
 }
 
 int saveToFile(DictNode* root, const char* filename)
 {
-    std::string path = resolveDataPath(filename);
-    std::ofstream file(nativePath(path));
-    if (!file.is_open()) {
-        return 0;
+    s_error.clear();
+    const std::string path = resolveDataPath(filename);
+    if (QFileInfo::exists(QString::fromStdString(path))) {
+        std::string existing;
+        std::vector<WordEntry> entries;
+        if (!readText(path, existing)) return 0;
+        if (!parseDictionary(existing, entries)) {
+            s_error = path + ": " + s_error;
+            return 0;
+        }
     }
-    saveNode(file, root);
-    return 1;
+    std::string text = "# qt-vocab UTF-8 TSV v1\n";
+    for (const auto& entry : wordSnapshot(root)) {
+        if (entry.word.empty() || entry.pos.empty() || entry.meaning.empty() ||
+            entry.word.find_first_of(" \t\r\n") != std::string::npos ||
+            entry.pos.find_first_of("\t\r\n") != std::string::npos ||
+            entry.meaning.find_first_of("\t\r\n") != std::string::npos) {
+            s_error = "单词、词性、释义必须完整，且不能包含制表符或换行。";
+            return 0;
+        }
+        text += entry.word + "\t" + entry.pos + "\t" + entry.meaning + "\n";
+    }
+    return writeText(path, text) ? 1 : 0;
 }
 
-struct DictEntry {
-    std::string word;
-    std::string pos;
-    std::string meaning;
-};
-
 // 从有序、去重的词条区间 [begin, end) 直接建树，左右子树规模最多相差 1。
-static DictNode* buildBalancedTree(const std::vector<DictEntry>& entries,
+static DictNode* buildBalancedTree(const std::vector<WordEntry>& entries,
                                  size_t begin, size_t end)
 {
     if (begin == end) return nullptr;
@@ -246,31 +373,12 @@ static DictNode* buildBalancedTree(const std::vector<DictEntry>& entries,
 
 DictNode* loadFromFile(DictNode* root, const char* filename)
 {
-    std::string path = resolveDataPath(filename);
-    std::ifstream file(nativePath(path));
-    if (!file.is_open()) return root;
-
-    // 先解析有效词条；文本内容保持原有字节编码。
-    std::vector<DictEntry> entries;
-    std::string line;
-    while (std::getline(file, line)) {
-        if (!line.empty() && line.back() == '\r')
-            line.pop_back();
-        size_t delimPos = line.find("  ");
-        if (delimPos == std::string::npos) continue;
-
-        std::string word = line.substr(0, delimPos);
-        std::string rest = line.substr(delimPos + 2);
-
-        size_t dotPos = rest.find('.');
-        if (dotPos == std::string::npos || dotPos + 1 >= rest.size()) continue;
-
-        std::string pos = rest.substr(0, dotPos + 1);  // 含 '.'
-        std::string meaning = rest.substr(dotPos + 1);
-
-        entries.push_back({word, pos, meaning});
-    }
-    file.close();
+    s_error.clear();
+    const std::string path = resolveDataPath(filename);
+    std::string text;
+    if (!readText(path, text)) return root;
+    std::vector<WordEntry> entries;
+    if (!parseDictionary(text, entries)) s_error = path + ": " + s_error;
 
     // 保留加载到已有树时的合并行为，以及已有节点指针的有效性。
     if (root != nullptr) {
@@ -279,7 +387,7 @@ DictNode* loadFromFile(DictNode* root, const char* filename)
         return root;
     }
 
-    auto less = [](const DictEntry& a, const DictEntry& b) {
+    auto less = [](const WordEntry& a, const WordEntry& b) {
         return cmpIgnoreCase(a.word, b.word) < 0;
     };
     // 程序保存的词库已经有序；外部乱序词库才需要排序。
@@ -328,334 +436,192 @@ void collectAllWords(DictNode* root, DictNode** arr, int* idx)
     collectAllWords(root->right, arr, idx);
 }
 
-// 忽略大小写的字符串比较
-[[maybe_unused]] static int icompare(const std::string& a, const std::string& b)
+static void snapshotNodes(DictNode* root, std::vector<WordEntry>& entries)
 {
-    size_t i = 0;
-    while (i < a.size() && i < b.size()) {
-        char ca = a[i], cb = b[i];
-        if (ca >= 'A' && ca <= 'Z') ca = static_cast<char>(ca + 32);
-        if (cb >= 'A' && cb <= 'Z') cb = static_cast<char>(cb + 32);
-        if (ca != cb) return ca - cb;
-        i++;
-    }
-    if (i < a.size()) return 1;
-    if (i < b.size()) return -1;
-    return 0;
+    if (!root) return;
+    snapshotNodes(root->left, entries);
+    entries.push_back({root->word, root->pos, root->meaning});
+    snapshotNodes(root->right, entries);
 }
 
-// ================================================================
-// 测验模式 1：拼写模式（看中文拼英文）
-// ================================================================
-
-void quizMode(DictNode** arr, int total, int quizNum)
+std::vector<WordEntry> wordSnapshot(DictNode* root)
 {
-    (void)arr;
-    if (total == 0) return;
-    if (quizNum > total) quizNum = total;
-
-    std::vector<int> indices = shuffledIndices(total);
-
-    for (int q = 0; q < quizNum; q++) {
-        (void)indices[q];
-        // 此函数在 Qt 版本中由 QuizWidget 调用，
-        // 答题交互在 UI 层完成，此处保留核心逻辑骨架供后续使用
-    }
+    std::vector<WordEntry> entries;
+    snapshotNodes(root, entries);
+    return entries;
 }
 
-// ================================================================
-// 测验模式 2：选择模式（看英文选中文释义）
-// ================================================================
-
-void quizChoice(DictNode** arr, int total, int quizNum)
+bool equivalentMeaning(const WordEntry& a, const WordEntry& b)
 {
-    (void)arr;
-    if (total < 4) return;
-    if (quizNum > total) quizNum = total;
-
-    std::vector<int> indices = shuffledIndices(total);
-
-    for (int q = 0; q < quizNum; q++) {
-        int idx = indices[q];
-        int options[4];
-        pickOptions(idx, total, options);
-        (void)options;
-        // 答题交互在 UI 层完成
-    }
+    return a.pos == b.pos && a.meaning == b.meaning;
 }
 
-// ================================================================
-// 测验模式 3：选择模式（看中文选英文单词）
-// ================================================================
-
-void quizChoiceReverse(DictNode** arr, int total, int quizNum)
+bool spellingMatches(const std::vector<WordEntry>& words,
+                     const WordEntry& target, const std::string& answer)
 {
-    (void)arr;
-    if (total < 4) return;
-    if (quizNum > total) quizNum = total;
-
-    std::vector<int> indices = shuffledIndices(total);
-
-    for (int q = 0; q < quizNum; q++) {
-        int idx = indices[q];
-        int options[4];
-        pickOptions(idx, total, options);
-        (void)options;
-        // 答题交互在 UI 层完成
-    }
+    return std::any_of(words.begin(), words.end(), [&](const WordEntry& entry) {
+        return equivalentMeaning(entry, target) && cmpIgnoreCase(entry.word, answer) == 0;
+    });
 }
 
 // ================================================================
 // 生词本操作
 // ================================================================
 
-void recordWrong(const std::string& word)
+static bool positiveInteger(const std::string& text, int& value)
 {
-    WrongWord wrongs[MAX_WRONG];
-    int count = 0;
-
-    std::ifstream fin(nativePath(resolveDataPath(WRONG_FILE)));
-    if (fin.is_open()) {
-        std::string w;
-        int c;
-        while (count < MAX_WRONG && fin >> w >> c) {
-            wrongs[count].word = w;
-            wrongs[count].count = c;
-            count++;
-        }
-        fin.close();
-    }
-
-    // 查找是否已存在
-    int found = 0;
-    for (int i = 0; i < count; i++) {
-        if (wrongs[i].word == word) {
-            wrongs[i].count++;
-            found = 1;
-            break;
-        }
-    }
-
-    // 不存在且未达上限则新增
-    if (!found) {
-        if (count < MAX_WRONG) {
-            wrongs[count].word = word;
-            wrongs[count].count = 1;
-            count++;
-        }
-    }
-
-    std::ofstream fout(nativePath(resolveDataPath(WRONG_FILE)));
-    if (fout.is_open()) {
-        for (int i = 0; i < count; i++) {
-            fout << wrongs[i].word << " " << wrongs[i].count << "\n";
-        }
-    }
+    auto result = std::from_chars(text.data(), text.data() + text.size(), value);
+    return result.ec == std::errc() && result.ptr == text.data() + text.size() && value > 0;
 }
 
-void removeWrongWord(const std::string& word)
+bool loadWrongWords(std::vector<WrongWord>& words)
 {
-    WrongWord wrongs[MAX_WRONG];
-    int count = 0;
-
-    std::ifstream fin(nativePath(resolveDataPath(WRONG_FILE)));
-    if (fin.is_open()) {
-        std::string w;
-        int c;
-        while (count < MAX_WRONG && fin >> w >> c) {
-            wrongs[count].word = w;
-            wrongs[count].count = c;
-            count++;
+    s_error.clear();
+    words.clear();
+    const std::string path = resolveDataPath(WRONG_FILE);
+    if (!QFileInfo::exists(QString::fromStdString(path))) return true;
+    std::string text;
+    if (!readText(path, text)) return false;
+    std::istringstream input(text);
+    std::string line;
+    int number = 0;
+    bool valid = true;
+    while (std::getline(input, line)) {
+        ++number;
+        if (line.empty() || line == "\r") continue;
+        std::istringstream fields(line);
+        std::string word, countText, extra;
+        int count = 0;
+        if (!(fields >> word >> countText) || (fields >> extra) || !positiveInteger(countText, count)) {
+            if (valid) s_error = path + ": 第 " + std::to_string(number) + " 行格式错误，请修复该行后重试。";
+            valid = false;
+            continue;
         }
-        fin.close();
-    }
-
-    // 过滤掉目标单词
-    std::ofstream fout(nativePath(resolveDataPath(WRONG_FILE)));
-    if (fout.is_open()) {
-        for (int i = 0; i < count; i++) {
-            if (wrongs[i].word != word) {
-                fout << wrongs[i].word << " " << wrongs[i].count << "\n";
-            }
+        auto found = std::find_if(words.begin(), words.end(), [&](const WrongWord& w) {
+            return cmpIgnoreCase(w.word, word) == 0;
+        });
+        if (found == words.end()) words.push_back({word, count});
+        else if (found->count <= INT_MAX - count) found->count += count;
+        else {
+            s_error = "生词错误次数超出可保存范围。";
+            valid = false;
         }
     }
+    return valid;
 }
 
-void showWrongWords(void (*callback)(const WrongWord*, int rank, int total))
+static bool saveWrongWords(const std::vector<WrongWord>& words)
 {
-    WrongWord wrongs[MAX_WRONG];
-    int count = 0;
+    std::string text;
+    for (const auto& w : words) text += w.word + " " + std::to_string(w.count) + "\n";
+    return writeText(resolveDataPath(WRONG_FILE), text);
+}
 
-    std::ifstream fin(nativePath(resolveDataPath(WRONG_FILE)));
-    if (!fin.is_open()) return;
-    std::string w;
-    int c;
-    while (count < MAX_WRONG && fin >> w >> c) {
-        wrongs[count].word = w;
-        wrongs[count].count = c;
-        count++;
+bool recordWrong(const std::string& word)
+{
+    std::vector<WrongWord> words;
+    if (!loadWrongWords(words)) return false;
+    if (word.empty() || word.find_first_of(" \t\r\n") != std::string::npos) {
+        s_error = "生词格式不正确。";
+        return false;
     }
-
-    if (count == 0) return;
-
-    // 按错误次数降序排列
-    std::sort(wrongs, wrongs + count,
-              [](const WrongWord& a, const WrongWord& b) { return a.count > b.count; });
-
-    for (int i = 0; i < count; i++) {
-        callback(&wrongs[i], i + 1, count);
+    auto found = std::find_if(words.begin(), words.end(), [&](const WrongWord& w) {
+        return cmpIgnoreCase(w.word, word) == 0;
+    });
+    if (found == words.end()) words.push_back({word, 1});
+    else if (found->count < INT_MAX) ++found->count;
+    else {
+        s_error = "生词错误次数超出可保存范围。";
+        return false;
     }
+    return saveWrongWords(words);
+}
+
+bool removeWrongWords(const std::vector<std::string>& removed)
+{
+    std::vector<WrongWord> words;
+    if (!loadWrongWords(words)) return false;
+    words.erase(std::remove_if(words.begin(), words.end(), [&](const WrongWord& w) {
+        return std::any_of(removed.begin(), removed.end(), [&](const std::string& word) {
+            return cmpIgnoreCase(w.word, word) == 0;
+        });
+    }), words.end());
+    return saveWrongWords(words);
+}
+
+bool removeWrongWord(const std::string& word)
+{
+    return removeWrongWords({word});
 }
 
 int countWrongWords()
 {
-    std::ifstream fin(nativePath(resolveDataPath(WRONG_FILE)));
-    if (!fin.is_open()) return 0;
-    int count = 0;
-    std::string line;
-    while (std::getline(fin, line)) {
-        if (line.size() > 1) count++;
-    }
-    return count;
-}
-
-DictNode** loadWrongWordsToArray(DictNode* root, int* count)
-{
-    WrongWord wrongs[MAX_WRONG];
-    int n = 0;
-
-    std::ifstream fin(nativePath(resolveDataPath(WRONG_FILE)));
-    if (!fin.is_open()) { *count = 0; return nullptr; }
-    std::string w;
-    int c;
-    while (n < MAX_WRONG && fin >> w >> c) {
-        wrongs[n].word = w;
-        wrongs[n].count = c;
-        n++;
-    }
-
-    if (n == 0) { *count = 0; return nullptr; }
-
-    DictNode** arr = new DictNode*[n];
-    int found = 0;
-    for (int i = 0; i < n; i++) {
-        DictNode* node = searchWord(root, wrongs[i].word);
-        if (node != nullptr) {
-            arr[found++] = node;
-        }
-    }
-    *count = found;
-    if (found == 0) { delete[] arr; return nullptr; }
-    return arr;
-}
-
-void clearWrongWords()
-{
-    std::ofstream fout(nativePath(resolveDataPath(WRONG_FILE)), std::ios::trunc);
-    fout.close();
+    std::vector<WrongWord> words;
+    loadWrongWords(words);
+    return static_cast<int>(words.size());
 }
 
 // ================================================================
-// 测验历史
+// 测验历史（最近 MAX_HISTORY 次，不表示终身累计统计）
 // ================================================================
-
-void saveQuizRecord(int mode, int correct, int total)
-{
-    if (total <= 0) return;
-    if (correct > total) correct = total;
-    if (correct < 0) correct = 0;
-
-    // 生成时间戳
-    time_t now = time(nullptr);
-    struct tm* t = localtime(&now);
-    std::string timestamp;
-    if (t != nullptr) {
-        char tsBuf[32];
-        strftime(tsBuf, sizeof(tsBuf), "%Y-%m-%dT%H:%M", t);
-        timestamp = tsBuf;
-    } else {
-        timestamp = "unknown";
-    }
-
-    // 读取已有记录
-    std::vector<QuizRecord> records;
-    std::string path = resolveDataPath(QUIZ_HISTORY_FILE);
-    std::ifstream fin(nativePath(path));
-    if (fin.is_open()) {
-        std::string line;
-        while (std::getline(fin, line)) {
-            if (!line.empty() && line.back() == '\r') line.pop_back();
-            if (line.empty()) continue;
-            // 格式：timestamp|mode|correct|total
-            size_t p1 = line.find('|');
-            size_t p2 = line.find('|', p1 + 1);
-            size_t p3 = line.find('|', p2 + 1);
-            if (p1 == std::string::npos || p2 == std::string::npos || p3 == std::string::npos)
-                continue;
-            QuizRecord r;
-            r.timestamp = line.substr(0, p1);
-            try {
-                r.mode    = std::stoi(line.substr(p1 + 1, p2 - p1 - 1));
-                r.correct = std::stoi(line.substr(p2 + 1, p3 - p2 - 1));
-                r.total   = std::stoi(line.substr(p3 + 1));
-            } catch (const std::exception&) {
-                continue;
-            }
-            records.push_back(r);
-        }
-        fin.close();
-    }
-
-    // 新记录插入头部
-    QuizRecord nr;
-    nr.timestamp = timestamp;
-    nr.mode      = mode;
-    nr.correct   = correct;
-    nr.total     = total;
-    records.insert(records.begin(), nr);
-
-    // 超过上限则截断
-    if (static_cast<int>(records.size()) > MAX_HISTORY) {
-        records.resize(MAX_HISTORY);
-    }
-
-    // 写回文件
-    std::ofstream fout(nativePath(path));
-    if (fout.is_open()) {
-        for (const auto& r : records) {
-            fout << r.timestamp << "|" << r.mode << "|"
-                 << r.correct << "|" << r.total << "\n";
-        }
-    }
-}
 
 std::vector<QuizRecord> loadQuizHistory()
 {
+    s_error.clear();
     std::vector<QuizRecord> records;
-    std::ifstream fin(nativePath(resolveDataPath(QUIZ_HISTORY_FILE)));
-    if (!fin.is_open()) return records;
-
+    const std::string path = resolveDataPath(QUIZ_HISTORY_FILE);
+    if (!QFileInfo::exists(QString::fromStdString(path))) return records;
+    std::string text;
+    if (!readText(path, text)) return records;
+    std::istringstream input(text);
     std::string line;
-    while (std::getline(fin, line)) {
+    int number = 0;
+    while (std::getline(input, line)) {
+        ++number;
         if (!line.empty() && line.back() == '\r') line.pop_back();
         if (line.empty()) continue;
-        size_t p1 = line.find('|');
-        size_t p2 = line.find('|', p1 + 1);
-        size_t p3 = line.find('|', p2 + 1);
-        if (p1 == std::string::npos || p2 == std::string::npos || p3 == std::string::npos)
-            continue;
-        QuizRecord r;
-        r.timestamp = line.substr(0, p1);
-        try {
-            r.mode    = std::stoi(line.substr(p1 + 1, p2 - p1 - 1));
-            r.correct = std::stoi(line.substr(p2 + 1, p3 - p2 - 1));
-            r.total   = std::stoi(line.substr(p3 + 1));
-        } catch (const std::exception&) {
+        std::vector<std::string> fields;
+        std::istringstream row(line);
+        std::string field;
+        while (std::getline(row, field, '|')) fields.push_back(field);
+        QuizRecord record{};
+        bool valid = fields.size() == 4 && !line.empty() && line.back() != '|';
+        if (valid) {
+            record.timestamp = fields[0];
+            for (int i = 1; i < 4; ++i) {
+                int& value = i == 1 ? record.mode : i == 2 ? record.correct : record.total;
+                auto parsed = std::from_chars(fields[i].data(), fields[i].data() + fields[i].size(), value);
+                valid = valid && parsed.ec == std::errc() && parsed.ptr == fields[i].data() + fields[i].size();
+            }
+            valid = valid && record.mode >= 0 && record.mode <= 3 &&
+                record.total > 0 && record.correct >= 0 && record.correct <= record.total &&
+                QDateTime::fromString(QString::fromStdString(record.timestamp), "yyyy-MM-dd'T'HH:mm").isValid();
+        }
+        if (!valid) {
+            if (s_error.empty()) s_error = path + ": 第 " + std::to_string(number) + " 行格式错误，请修复该行后重试。";
             continue;
         }
-        records.push_back(r);
+        if (records.size() < MAX_HISTORY) records.push_back(record);
     }
     return records;
+}
+
+bool saveQuizRecord(int mode, int correct, int total)
+{
+    auto records = loadQuizHistory();
+    if (!s_error.empty()) return false;
+    if (mode < 0 || mode > 3 || total <= 0 || correct < 0 || correct > total) {
+        s_error = "测验成绩不在有效范围内。";
+        return false;
+    }
+    records.insert(records.begin(), {
+        QDateTime::currentDateTime().toString("yyyy-MM-dd'T'HH:mm").toStdString(), mode, correct, total});
+    if (records.size() > MAX_HISTORY) records.resize(MAX_HISTORY);
+    std::string text;
+    for (const auto& r : records)
+        text += r.timestamp + "|" + std::to_string(r.mode) + "|" +
+            std::to_string(r.correct) + "|" + std::to_string(r.total) + "\n";
+    return writeText(resolveDataPath(QUIZ_HISTORY_FILE), text);
 }
 
 // ================================================================
@@ -683,20 +649,6 @@ static void collectPOS(DictNode* root, std::string posTypes[], int posCounts[],
     }
 
     collectPOS(root->right, posTypes, posCounts, typeCount);
-}
-
-void countByPOS(DictNode* root,
-                void (*callback)(const std::string& pos, int count))
-{
-    if (root == nullptr) return;
-    std::string posTypes[64];
-    int posCounts[64] = {0};
-    int typeCount = 0;
-    collectPOS(root, posTypes, posCounts, &typeCount);
-
-    for (int i = 0; i < typeCount; i++) {
-        callback(posTypes[i], posCounts[i]);
-    }
 }
 
 void getPOSStats(DictNode* root, std::vector<POSStat>& stats)

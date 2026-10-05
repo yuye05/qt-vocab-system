@@ -5,7 +5,8 @@
 #include <QScrollArea>
 #include <QPainter>
 #include <QKeyEvent>
-#include <QCoreApplication>
+#include <QMessageBox>
+#include <QEvent>
 #include <cstdlib>
 #include <string>
 
@@ -60,11 +61,6 @@ QuizWidget::QuizWidget(QWidget* parent)
 
     mainLayout->addWidget(title);
     mainLayout->addWidget(m_pages, 1);
-}
-
-QuizWidget::~QuizWidget()
-{
-    delete[] m_dictArr;
 }
 
 void QuizWidget::setRoot(DictNode** rootPtr)
@@ -183,6 +179,7 @@ void QuizWidget::buildQuizPage()
     cancelBtn->setFixedSize(72, 32);
     connect(cancelBtn, &QPushButton::clicked, this, &QuizWidget::onCancel);
     topBar->addWidget(cancelBtn);
+    cancelBtn->installEventFilter(this);
 
     // ---- 题目区域 ----
     m_questionLabel = new QLabel;
@@ -196,8 +193,7 @@ void QuizWidget::buildQuizPage()
     m_spellingInput->setPlaceholderText("请输入英文单词...");
     m_spellingInput->setAlignment(Qt::AlignCenter);
     m_spellingInput->setFixedHeight(48);
-    connect(m_spellingInput, &QLineEdit::returnPressed,
-            this, &QuizWidget::onSpellingReturn);
+    m_spellingInput->installEventFilter(this);
 
     // ---- 选择题选项（4 个） ----
     QHBoxLayout* optRow = new QHBoxLayout;
@@ -207,12 +203,17 @@ void QuizWidget::buildQuizPage()
         m_optBtns[i]->setObjectName("quizOptionBtn");
         m_optBtns[i]->setMinimumHeight(52);
         optRow->addWidget(m_optBtns[i], 1);
+        m_optBtns[i]->installEventFilter(this);
+        connect(m_optBtns[i], &QPushButton::clicked, this, [this, i]() {
+            checkChoiceAnswer(m_optBtns[i]->property("optIndex").toInt());
+        });
     }
 
     // ---- 反馈区域 ----
     m_feedbackLabel = new QLabel;
     m_feedbackLabel->setObjectName("quizFeedback");
     m_feedbackLabel->setAlignment(Qt::AlignCenter);
+    m_feedbackLabel->setWordWrap(true);
     m_feedbackLabel->setMinimumHeight(36);
 
     // ---- 操作按钮 ----
@@ -221,6 +222,7 @@ void QuizWidget::buildQuizPage()
     m_actionBtn = new QPushButton("提交");
     m_actionBtn->setObjectName("quizActionBtn");
     m_actionBtn->setFixedSize(140, 44);
+    m_actionBtn->installEventFilter(this);
     connect(m_actionBtn, &QPushButton::clicked, this, &QuizWidget::onSubmitOrNext);
     btnRow->addWidget(m_actionBtn);
     btnRow->addStretch();
@@ -314,15 +316,11 @@ void QuizWidget::onCountBtn(int id)
 
 void QuizWidget::onStartQuiz()
 {
-    if (!m_dictRoot || !*m_dictRoot) return;
-    startQuiz();
-}
-
-void QuizWidget::onSpellingReturn()
-{
-    if (!m_answered && m_spellingInput->isVisible()) {
-        onSubmitOrNext();
+    if (!m_dictRoot || !*m_dictRoot) {
+        QMessageBox::information(this, "词库为空", "请先在词库管理中添加单词。");
+        return;
     }
+    startQuiz();
 }
 
 void QuizWidget::onSubmitOrNext()
@@ -345,15 +343,13 @@ void QuizWidget::onSubmitOrNext()
 
 void QuizWidget::onCancel()
 {
-    // 取消测验，不记录生词本，清理状态
-    delete[] m_dictArr;
-    m_dictArr  = nullptr;
+    // 取消当前测验；已经提交的错题保留在生词本中。
+    m_words.clear();
     m_dictTotal = 0;
     m_currentQ = 0;
     m_correctCount = 0;
     m_answered = false;
     m_quizIndices.clear();
-    m_results.clear();
     m_wrongList.clear();
     m_pages->setCurrentIndex(0);
 }
@@ -362,60 +358,47 @@ void QuizWidget::onCancel()
 // 键盘快捷键
 // ================================================================
 
+bool QuizWidget::handleKey(QKeyEvent* event)
+{
+    const int key = event->key();
+    const int page = m_pages->currentIndex();
+    if (page == 1) {
+        if (key == Qt::Key_Escape) {
+            if (!event->isAutoRepeat()) onCancel();
+            return true;
+        }
+        if ((key == Qt::Key_Return || key == Qt::Key_Enter) &&
+            (m_selectedMode == 0 || m_answered)) {
+            if (!event->isAutoRepeat()) onSubmitOrNext();
+            return true;
+        }
+        if (m_answered && key == Qt::Key_Space) {
+            if (!event->isAutoRepeat()) onSubmitOrNext();
+            return true;
+        }
+        if (!m_answered && m_selectedMode != 0 && key >= Qt::Key_1 && key <= Qt::Key_4) {
+            const int option = key - Qt::Key_1;
+            if (!event->isAutoRepeat() && m_optBtns[option]->isVisible() && m_optBtns[option]->isEnabled())
+                checkChoiceAnswer(m_optBtns[option]->property("optIndex").toInt());
+            return true;
+        }
+    } else if (page == 2 && (key == Qt::Key_Escape || key == Qt::Key_Return ||
+                            key == Qt::Key_Enter || key == Qt::Key_Space)) {
+        if (!event->isAutoRepeat()) m_pages->setCurrentIndex(0);
+        return true;
+    }
+    return false;
+}
+
+bool QuizWidget::eventFilter(QObject* object, QEvent* event)
+{
+    if (event->type() == QEvent::KeyPress && handleKey(static_cast<QKeyEvent*>(event))) return true;
+    return QWidget::eventFilter(object, event);
+}
+
 void QuizWidget::keyPressEvent(QKeyEvent* event)
 {
-    int page = m_pages->currentIndex();
-
-    if (page == 1) {
-        // ---- 答题页 ----
-        int key = event->key();
-
-        // Escape: 取消测验
-        if (key == Qt::Key_Escape) {
-            onCancel();
-            return;
-        }
-
-        // 选择模式 + 未作答: 1/2/3/4 选择选项
-        if (!m_answered && m_selectedMode != 0) {
-            int optIdx = -1;
-            if (key == Qt::Key_1) optIdx = 0;
-            else if (key == Qt::Key_2) optIdx = 1;
-            else if (key == Qt::Key_3) optIdx = 2;
-            else if (key == Qt::Key_4) optIdx = 3;
-
-            if (optIdx >= 0 && m_optBtns[optIdx]->isVisible()
-                && m_optBtns[optIdx]->isEnabled()) {
-                int realIdx = m_optBtns[optIdx]->property("optIndex").toInt();
-                checkChoiceAnswer(realIdx);
-                return;
-            }
-        }
-
-        // 已作答: Enter/Space 下一题
-        if (m_answered &&
-            (key == Qt::Key_Return || key == Qt::Key_Enter || key == Qt::Key_Space)) {
-            onSubmitOrNext();
-            return;
-        }
-    } else if (page == 2) {
-        // ---- 结果页 ----
-        int key = event->key();
-
-        // Escape: 返回设置
-        if (key == Qt::Key_Escape) {
-            m_pages->setCurrentIndex(0);
-            return;
-        }
-
-        // Enter/Space: 再来一轮
-        if (key == Qt::Key_Return || key == Qt::Key_Enter || key == Qt::Key_Space) {
-            m_pages->setCurrentIndex(0);
-            return;
-        }
-    }
-
-    QWidget::keyPressEvent(event);
+    if (!handleKey(event)) QWidget::keyPressEvent(event);
 }
 
 // ================================================================
@@ -424,17 +407,9 @@ void QuizWidget::keyPressEvent(QKeyEvent* event)
 
 void QuizWidget::startQuiz()
 {
-    // 清理上一次测验
-    delete[] m_dictArr;
-    m_dictArr = nullptr;
-
-    // 收集所有单词
-    m_dictTotal = countWords(*m_dictRoot);
+    m_words = wordSnapshot(*m_dictRoot);
+    m_dictTotal = static_cast<int>(m_words.size());
     if (m_dictTotal == 0) return;
-
-    m_dictArr = new DictNode*[m_dictTotal];
-    int idx = 0;
-    collectAllWords(*m_dictRoot, m_dictArr, &idx);
 
     // 洗牌生成题序
     m_quizIndices = shuffledIndices(m_dictTotal);
@@ -445,8 +420,6 @@ void QuizWidget::startQuiz()
     m_currentQ     = 0;
     m_correctCount = 0;
     m_answered     = false;
-    m_results.clear();
-    m_results.resize(actualCount, false);
     m_wrongList.clear();
 
     // 切到答题页，显示第一题
@@ -460,7 +433,7 @@ void QuizWidget::showQuestion()
 
     int total = static_cast<int>(m_quizIndices.size());
     int wordIdx = m_quizIndices[m_currentQ];
-    DictNode* node = m_dictArr[wordIdx];
+    const WordEntry* node = &m_words[wordIdx];
 
     // 进度显示
     m_progressLabel->setText(
@@ -475,13 +448,6 @@ void QuizWidget::showQuestion()
     m_spellingInput->clear();
     m_spellingInput->setEnabled(true);
 
-    // 焦点：拼写模式→输入框，选择模式→第一个选项按钮
-    if (m_selectedMode == 0) {
-        m_spellingInput->setFocus();
-    } else if (m_optBtns[0]->isVisible()) {
-        m_optBtns[0]->setFocus();
-    }
-
     for (int i = 0; i < 4; i++) {
         m_optBtns[i]->setEnabled(true);
         m_optBtns[i]->setStyleSheet("");
@@ -493,8 +459,8 @@ void QuizWidget::showQuestion()
     if (m_selectedMode == 0) {
         // ---- 拼写模式：显示中文，输入英文 ----
         m_questionLabel->setText(
-            QString::fromLocal8Bit(node->pos.c_str()) + " " +
-            QString::fromLocal8Bit(node->meaning.c_str()));
+            QString::fromUtf8(node->pos.c_str()) + " " +
+            QString::fromUtf8(node->meaning.c_str()));
         m_questionLabel->setStyleSheet("font-size: 24px; color: #2C2416; font-weight: bold;");
 
         m_spellingInput->setVisible(true);
@@ -513,8 +479,8 @@ void QuizWidget::showQuestion()
     } else {
         // ---- 中→英：显示中文，选英文单词 ----
         m_questionLabel->setText(
-            QString::fromLocal8Bit(node->pos.c_str()) + " " +
-            QString::fromLocal8Bit(node->meaning.c_str()));
+            QString::fromUtf8(node->pos.c_str()) + " " +
+            QString::fromUtf8(node->meaning.c_str()));
         m_questionLabel->setStyleSheet("font-size: 24px; color: #2C2416; font-weight: bold;");
 
         m_spellingInput->setVisible(false);
@@ -522,6 +488,8 @@ void QuizWidget::showQuestion()
 
         setupChoiceOptions(wordIdx);
     }
+    if (m_selectedMode == 0) m_spellingInput->setFocus();
+    else m_optBtns[0]->setFocus();
 }
 
 void QuizWidget::setupChoiceOptions(int wordIdx)
@@ -529,30 +497,25 @@ void QuizWidget::setupChoiceOptions(int wordIdx)
     // 根据模式决定选项显示内容：英→中显示释义，中→英显示单词
     bool showMeaning = (m_selectedMode == 1);
 
-    int opts[4];
-    pickOptions(wordIdx, m_dictTotal, opts);
+    const auto opts = pickOptions(wordIdx, m_words);
     const char* prefix[] = {"A. ", "B. ", "C. ", "D. "};
-    for (int i = 0; i < 4; i++) {
-        DictNode* opt = m_dictArr[opts[i]];
-        QString text = QString(prefix[i]) +
-            (showMeaning
-                ? QString::fromLocal8Bit(opt->pos.c_str()) + " " +
-                  QString::fromLocal8Bit(opt->meaning.c_str())
-                : QString::fromStdString(opt->word));
-        m_optBtns[i]->setText(text);
-        m_optBtns[i]->setProperty("optIndex", opts[i]);
-        disconnect(m_optBtns[i], nullptr, nullptr, nullptr);
-        connect(m_optBtns[i], &QPushButton::clicked, this, [this, i]() {
-            int optIdx = m_optBtns[i]->property("optIndex").toInt();
-            checkChoiceAnswer(optIdx);
-        });
+    for (int i = 0; i < 4; ++i) {
+        const bool available = i < static_cast<int>(opts.size());
+        m_optBtns[i]->setVisible(available);
+        m_optBtns[i]->setProperty("optIndex", available ? opts[i] : -1);
+        if (!available) continue;
+        const auto& option = m_words[opts[i]];
+        m_optBtns[i]->setText(QString(prefix[i]) + (showMeaning
+            ? QString::fromStdString(option.pos + " " + option.meaning)
+            : QString::fromStdString(option.word)));
     }
 }
 
 void QuizWidget::checkSpellingAnswer()
 {
+    if (m_answered) return;
     int wordIdx = m_quizIndices[m_currentQ];
-    DictNode* node = m_dictArr[wordIdx];
+    const WordEntry* node = &m_words[wordIdx];
 
     QString userInput = m_spellingInput->text().trimmed();
     if (userInput.isEmpty()) return;
@@ -561,15 +524,13 @@ void QuizWidget::checkSpellingAnswer()
     m_spellingInput->setEnabled(false);
 
     QString correct = QString::fromStdString(node->word);
-    bool isCorrect = (userInput.compare(correct, Qt::CaseInsensitive) == 0);
+    bool isCorrect = spellingMatches(m_words, *node, userInput.toStdString());
 
     if (isCorrect) {
         m_correctCount++;
-        m_results[m_currentQ] = true;
-        m_feedbackLabel->setText("✓ 回答正确！");
+        m_feedbackLabel->setText(QString("✓ 回答正确！本题目标词：%1").arg(QString::fromStdString(node->word)));
         m_feedbackLabel->setStyleSheet("color: #606C38; font-size: 16px; font-weight: bold;");
     } else {
-        m_results[m_currentQ] = false;
         m_feedbackLabel->setText(
             QString("✗ 回答错误，正确答案是：%1").arg(correct));
         m_feedbackLabel->setStyleSheet("color: #C66B3D; font-size: 16px; font-weight: bold;");
@@ -581,20 +542,22 @@ void QuizWidget::checkSpellingAnswer()
         info.userAnswer     = userInput.toStdString();
         m_wrongList.push_back(info);
 
-        recordWrong(node->word);
+        if (m_dictRoot && searchWord(*m_dictRoot, node->word) && !recordWrong(node->word))
+            QMessageBox::warning(this, "生词本未保存", QString::fromStdString(dataError()));
     }
 
     bool isLast = (m_currentQ + 1 >= static_cast<int>(m_quizIndices.size()));
     m_actionBtn->setText(isLast ? "查看结果" : "下一题");
     m_actionBtn->setVisible(true);
+    m_actionBtn->setFocus();
 }
 
 void QuizWidget::checkChoiceAnswer(int clickedIdx)
 {
+    if (clickedIdx < 0 || clickedIdx >= static_cast<int>(m_words.size()) || m_answered) return;
     int wordIdx = m_quizIndices[m_currentQ];
-    DictNode* node = m_dictArr[wordIdx];
+    const WordEntry* node = &m_words[wordIdx];
 
-    if (m_answered) return;
     m_answered = true;
 
     bool isCorrect = (clickedIdx == wordIdx);
@@ -614,11 +577,9 @@ void QuizWidget::checkChoiceAnswer(int clickedIdx)
 
     if (isCorrect) {
         m_correctCount++;
-        m_results[m_currentQ] = true;
-        m_feedbackLabel->setText("✓ 回答正确！");
+        m_feedbackLabel->setText(QString("✓ 回答正确！本题目标词：%1").arg(QString::fromStdString(node->word)));
         m_feedbackLabel->setStyleSheet("color: #606C38; font-size: 16px; font-weight: bold;");
     } else {
-        m_results[m_currentQ] = false;
         m_feedbackLabel->setText(
             QString("✗ 回答错误，正确答案是：%1").arg(
                 QString::fromStdString(node->word)));
@@ -628,15 +589,17 @@ void QuizWidget::checkChoiceAnswer(int clickedIdx)
         info.word           = node->word;
         info.pos            = node->pos;
         info.correctMeaning = node->meaning;
-        info.userAnswer     = m_dictArr[clickedIdx]->word;
+        info.userAnswer     = m_selectedMode == 1 ? m_words[clickedIdx].meaning : m_words[clickedIdx].word;
         m_wrongList.push_back(info);
 
-        recordWrong(node->word);
+        if (m_dictRoot && searchWord(*m_dictRoot, node->word) && !recordWrong(node->word))
+            QMessageBox::warning(this, "生词本未保存", QString::fromStdString(dataError()));
     }
 
     bool isLast = (m_currentQ + 1 >= static_cast<int>(m_quizIndices.size()));
     m_actionBtn->setText(isLast ? "查看结果" : "下一题");
     m_actionBtn->setVisible(true);
+    m_actionBtn->setFocus();
 }
 
 void QuizWidget::showResult()
@@ -644,11 +607,11 @@ void QuizWidget::showResult()
     int total = static_cast<int>(m_quizIndices.size());
 
     // 记录测验历史
-    saveQuizRecord(m_selectedMode, m_correctCount, total);
+    if (!saveQuizRecord(m_selectedMode, m_correctCount, total))
+        QMessageBox::warning(this, "历史未保存", QString::fromStdString(dataError()));
 
     // 释放数组
-    delete[] m_dictArr;
-    m_dictArr  = nullptr;
+    m_words.clear();
     m_dictTotal = 0;
 
     int pct = (total > 0) ? (m_correctCount * 100 / total) : 0;
@@ -682,8 +645,8 @@ void QuizWidget::showResult()
             QLabel* lbl = new QLabel(
                 QString("✗ %1  %2%3  你的答案：%4")
                     .arg(QString::fromStdString(w.word))
-                    .arg(QString::fromLocal8Bit(w.pos.c_str()))
-                    .arg(QString::fromLocal8Bit(w.correctMeaning.c_str()))
+                    .arg(QString::fromUtf8(w.pos.c_str()))
+                    .arg(QString::fromUtf8(w.correctMeaning.c_str()))
                     .arg(QString::fromStdString(w.userAnswer)));
             lbl->setObjectName("quizWrongItem");
             lbl->setWordWrap(true);

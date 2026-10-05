@@ -5,9 +5,11 @@
 /* ===== 数据目录解析（解决 Debug/Release/shadow build 路径问题） ===== */
 void setDataSearchDirs(const std::vector<std::string>& dirs);
 std::string resolveDataPath(const char* filename);
+bool initializeDataDirectory(const std::string& directory,
+                             const std::vector<std::string>& legacyDirectories);
+const std::string& dataError();
 
 /* ===== 常量定义 ===== */
-constexpr int MAX_WRONG = 200;          /* 生词本最大单词数 */
 constexpr int MAX_HISTORY = 20;         /* 测验历史最大条数 */
 constexpr const char* DICT_FILE = "dictionary.txt";
 constexpr const char* WRONG_FILE = "wrong_words.txt";
@@ -24,6 +26,15 @@ struct DictNode {
     DictNode(const std::string& w, const std::string& p, const std::string& m)
         : word(w), pos(p), meaning(m), left(nullptr), right(nullptr) {}
 };
+
+// 独立于 BST 节点生命周期的词条快照，供表格与测验使用。
+struct WordEntry {
+    std::string word, pos, meaning;
+};
+std::vector<WordEntry> wordSnapshot(DictNode* root);
+bool equivalentMeaning(const WordEntry& a, const WordEntry& b);
+bool spellingMatches(const std::vector<WordEntry>& words,
+                     const WordEntry& target, const std::string& answer);
 
 /* ===== 生词本结构体 ===== */
 struct WrongWord {
@@ -83,30 +94,20 @@ int inputCheck(const std::string& word);
 /* 收集全部单词指针到数组（中序遍历） */
 void collectAllWords(DictNode* root, DictNode** arr, int* idx);
 
-/* 测验模式 */
-void quizMode(DictNode** arr, int total, int quizNum);            /* 拼写模式（看中文拼英文） */
-void quizChoice(DictNode** arr, int total, int quizNum);         /* 选择模式（英→中） */
-void quizChoiceReverse(DictNode** arr, int total, int quizNum);  /* 选择模式（中→英） */
-
-/* 词性分布统计，回调函数版本 */
-void countByPOS(DictNode* root,
-                void (*callback)(const std::string& pos, int count));
-
 /* 词性分布统计，填充 vector 版本（UI 友好） */
 void getPOSStats(DictNode* root, std::vector<POSStat>& stats);
 
 /* 生词本操作 */
-void recordWrong(const std::string& word);
-void removeWrongWord(const std::string& word);
-void showWrongWords(void (*callback)(const WrongWord*, int rank, int total));
+bool recordWrong(const std::string& word);
+bool removeWrongWord(const std::string& word);
+bool removeWrongWords(const std::vector<std::string>& words);
+bool loadWrongWords(std::vector<WrongWord>& words);
 int countWrongWords();
-void clearWrongWords();
-DictNode** loadWrongWordsToArray(DictNode* root, int* count);
 
 /* 测验辅助（供 UI 层调用） */
 std::vector<int> shuffledIndices(int total);
-void pickOptions(int correctIdx, int total, int options[4]);
+std::vector<int> pickOptions(int correctIdx, const std::vector<WordEntry>& words);
 
 /* 测验历史 */
-void saveQuizRecord(int mode, int correct, int total);
+bool saveQuizRecord(int mode, int correct, int total);
 std::vector<QuizRecord> loadQuizHistory();

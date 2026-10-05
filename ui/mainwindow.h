@@ -13,7 +13,7 @@ class WrongWordsWidget;
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
-    explicit MainWindow(QWidget* parent = nullptr);
+    explicit MainWindow(QWidget* parent = nullptr, const QString& dataDirectory = {});
     ~MainWindow() override;
 
 private slots:
@@ -22,6 +22,7 @@ private slots:
 private:
     void setupUi();
     void loadDictionary();
+    void refreshHome();
 
     QListWidget*      m_navList;
     QStackedWidget*   m_pages;

@@ -74,38 +74,42 @@ static bool showAddWordDialog(QWidget* parent, std::string& word,
     form->addRow(btnRow);
 
     QObject::connect(cancelBtn, &QPushButton::clicked, &dlg, &QDialog::reject);
-    QObject::connect(okBtn, &QPushButton::clicked, &dlg, &QDialog::accept);
+    QObject::connect(okBtn, &QPushButton::clicked, &dlg, [&]() {
+        std::string w = wordEdit->text().trimmed().toStdString();
+        std::string p = posEdit->currentText().trimmed().toStdString();
+        std::string m = meaningEdit->text().trimmed().toStdString();
 
-    if (dlg.exec() != QDialog::Accepted)
-        return false;
+        if (w.empty() || p.empty() || m.empty()) {
+            QMessageBox::warning(&dlg, "输入不完整",
+                                 "英文单词、词性和中文释义都不能为空。");
+            return;
+        }
 
-    std::string w = wordEdit->text().trimmed().toStdString();
-    std::string p = posEdit->currentText().trimmed().toStdString();
-    std::string m = meaningEdit->text().trimmed().toStdString();
+        if (p.find_first_of("\t\r\n") != std::string::npos ||
+            m.find_first_of("\t\r\n") != std::string::npos) {
+            QMessageBox::warning(&dlg, "格式错误", "词性和释义不能包含制表符或换行。");
+            return;
+        }
 
-    if (w.empty() || p.empty() || m.empty()) {
-        QMessageBox::warning(parent, "输入不完整",
-                             "英文单词、词性和中文释义都不能为空。");
-        return false;
-    }
+        int err = inputCheck(w);
+        if (err != 0) {
+            QString msg;
+            if (err == 1) msg = "单词必须以大写或小写字母开头。";
+            else if (err == 2) msg = "单词长度必须在 1 到 45 个字符之间。";
+            else if (err == 3) msg = "单词只能包含大小写字母和连字符。";
+            else if (err == 4) msg = "单词不能以连字符开头或结尾。";
+            else if (err == 5) msg = "单词不能包含两个连续的连字符。";
+            else if (err == 6) msg = "连字符不能出现在数字旁边。";
+            QMessageBox::warning(&dlg, "单词格式错误", msg);
+            return;
+        }
 
-    int err = inputCheck(w);
-    if (err != 0) {
-        QString msg;
-        if (err == 1) msg = "单词必须以大写或小写字母开头。";
-        else if (err == 2) msg = "单词长度必须在 1 到 45 个字符之间。";
-        else if (err == 3) msg = "单词只能包含大小写字母和连字符。";
-        else if (err == 4) msg = "单词不能以连字符开头或结尾。";
-        else if (err == 5) msg = "单词不能包含两个连续的连字符。";
-        else if (err == 6) msg = "连字符不能出现在数字旁边。";
-        QMessageBox::warning(parent, "单词格式错误", msg);
-        return false;
-    }
-
-    word    = w;
-    pos     = p;
-    meaning = m;
-    return true;
+        word    = w;
+        pos     = p;
+        meaning = m;
+        dlg.accept();
+    });
+    return dlg.exec() == QDialog::Accepted;
 }
 
 /* ================================================================
@@ -212,14 +216,9 @@ void DictWidget::setupUi()
 /* ---- 刷新表格 ---- */
 void DictWidget::refreshTable(const std::string& filter)
 {
-    if (!m_rootPtr || !*m_rootPtr) return;
-    DictNode* root = *m_rootPtr;
-
-    // 收集所有单词
-    constexpr int MAX_WORDS = 100000;
-    DictNode** arr = new DictNode*[MAX_WORDS];
-    int total = 0;
-    collectAllWords(root, arr, &total);
+    if (!m_rootPtr) return;
+    const auto arr = wordSnapshot(*m_rootPtr);
+    int total = static_cast<int>(arr.size());
 
     m_table->setSortingEnabled(false);
     m_table->setRowCount(total);
@@ -230,7 +229,7 @@ void DictWidget::refreshTable(const std::string& filter)
 
     int row = 0;
     for (int i = 0; i < total; i++) {
-        const std::string& w = arr[i]->word;
+        const std::string& w = arr[i].word;
         // 前缀过滤（大小写不敏感）
         if (!filter.empty()) {
             if (w.size() < filter.size())
@@ -247,11 +246,11 @@ void DictWidget::refreshTable(const std::string& filter)
         item0->setTextAlignment(Qt::AlignCenter);
         m_table->setItem(row, 0, item0);
 
-        auto* item1 = new QTableWidgetItem(QString::fromLocal8Bit(arr[i]->pos.c_str()));
+        auto* item1 = new QTableWidgetItem(QString::fromUtf8(arr[i].pos.c_str()));
         item1->setTextAlignment(Qt::AlignCenter);
         m_table->setItem(row, 1, item1);
 
-        auto* item2 = new QTableWidgetItem(QString::fromLocal8Bit(arr[i]->meaning.c_str()));
+        auto* item2 = new QTableWidgetItem(QString::fromUtf8(arr[i].meaning.c_str()));
         item2->setTextAlignment(Qt::AlignCenter);
         m_table->setItem(row, 2, item2);
         row++;
@@ -261,7 +260,6 @@ void DictWidget::refreshTable(const std::string& filter)
     if (emptyLabel) emptyLabel->setVisible(row == 0);
     m_table->setVisible(row > 0);
 
-    delete[] arr;
     m_table->setSortingEnabled(true);
 }
 
@@ -272,36 +270,37 @@ void DictWidget::onSearch()
     refreshTable(text);
 }
 
+// ponytail: 每次编辑复制 O(n) 节点以保留失败前的树；词库很大时再采用增量事务。
+static DictNode* copyTree(const DictNode* root)
+{
+    if (!root) return nullptr;
+    auto* copy = new DictNode(root->word, root->pos, root->meaning);
+    copy->left = copyTree(root->left);
+    copy->right = copyTree(root->right);
+    return copy;
+}
+
 /* ---- 添加单词 ---- */
 void DictWidget::onAddWord()
 {
-    if (!m_rootPtr || !*m_rootPtr) return;
-
+    if (!m_rootPtr) return;
     std::string word, pos, meaning;
-    if (!showAddWordDialog(this, word, pos, meaning))
-        return;
+    if (!showAddWordDialog(this, word, pos, meaning)) return;
+    if (searchWord(*m_rootPtr, word) &&
+        QMessageBox::question(this, "单词已存在",
+            QString("「%1」已在词库中，是否更新词性和释义？").arg(QString::fromStdString(word)),
+            QMessageBox::Yes | QMessageBox::No) != QMessageBox::Yes) return;
 
-    // 检查是否已存在
-    DictNode* existing = searchWord(*m_rootPtr, word);
-    if (existing) {
-        QMessageBox::StandardButton reply = QMessageBox::question(
-            this, "单词已存在",
-            QString::fromStdString("「" + word + "」已在词库中，是否更新词性和释义？"),
-            QMessageBox::Yes | QMessageBox::No);
-        if (reply != QMessageBox::Yes) return;
-    }
-
-    // 将用户输入的 meaning 从 UTF-8 转为 GBK，与词典文件编码一致
-    QString meaningQStr = QString::fromStdString(meaning);
-    std::string meaningGbk = meaningQStr.toLocal8Bit().toStdString();
-
-    *m_rootPtr = insertWord(*m_rootPtr, word, pos, meaningGbk);
-    if (!saveToFile(*m_rootPtr, DICT_FILE)) {
-        QMessageBox::warning(this, "保存失败", "无法写入词典文件，请检查文件权限。");
+    DictNode* candidate = insertWord(copyTree(*m_rootPtr), word, pos, meaning);
+    if (!saveToFile(candidate, DICT_FILE)) {
+        const QString error = QString::fromStdString(dataError());
+        freeTree(candidate);
+        QMessageBox::warning(this, "保存失败", error + "\n本次修改未生效。");
         return;
     }
-
-    refreshTable();
+    freeTree(*m_rootPtr);
+    *m_rootPtr = candidate;
+    refreshTable(m_searchEdit->text().trimmed().toStdString());
 }
 
 /* ---- 删除单词 ---- */
@@ -327,12 +326,16 @@ void DictWidget::onDeleteWord()
 
     if (reply != QMessageBox::Yes) return;
 
-    // 先修改 BST，再尝试保存
-    *m_rootPtr = deleteWord(*m_rootPtr, word);
-    if (!saveToFile(*m_rootPtr, DICT_FILE)) {
-        QMessageBox::warning(this, "保存失败",
-            "无法写入词典文件，但该单词已在内存中删除。\n请检查文件权限后重新打开程序以保持一致。");
+    DictNode* candidate = deleteWord(copyTree(*m_rootPtr), word);
+    if (!saveToFile(candidate, DICT_FILE)) {
+        const QString error = QString::fromStdString(dataError());
+        freeTree(candidate);
+        QMessageBox::warning(this, "保存失败", error + "\n该单词仍保留在词库中。");
+        return;
     }
-
-    refreshTable();
+    freeTree(*m_rootPtr);
+    *m_rootPtr = candidate;
+    if (!removeWrongWord(word))
+        QMessageBox::warning(this, "生词本未更新", QString::fromStdString(dataError()));
+    refreshTable(m_searchEdit->text().trimmed().toStdString());
 }

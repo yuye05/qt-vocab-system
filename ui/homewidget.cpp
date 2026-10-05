@@ -247,7 +247,7 @@ void HomeWidget::setPOSStats(const std::vector<POSStat>& stats)
         rowLayout->setContentsMargins(0, 0, 0, 0);
         rowLayout->setSpacing(10);
 
-        QLabel* posLabel = new QLabel(QString::fromLocal8Bit(stats[i].pos.c_str()));
+        QLabel* posLabel = new QLabel(QString::fromStdString(stats[i].pos));
         posLabel->setObjectName("posNameLabel");
         posLabel->setFixedWidth(50);
 
@@ -326,7 +326,7 @@ void HomeWidget::setQuizHistory(const std::vector<QuizRecord>& records)
         scoreLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
 
         // 正确率
-        int pct = (r.total > 0) ? (r.correct * 100 / r.total) : 0;
+        qint64 pct = (r.total > 0) ? (static_cast<qint64>(r.correct) * 100 / r.total) : 0;
         QLabel* pctLabel = new QLabel(QString("%1%").arg(pct));
         pctLabel->setObjectName("quizHistoryPct");
         pctLabel->setFixedWidth(42);
@@ -342,12 +342,12 @@ void HomeWidget::setQuizHistory(const std::vector<QuizRecord>& records)
 
     // 汇总行：总次数 + 平均正确率
     int totalQuizzes = static_cast<int>(records.size());
-    int sumCorrect = 0, sumTotal = 0;
+    qint64 sumCorrect = 0, sumTotal = 0;
     for (const auto& r : records) {
         sumCorrect += r.correct;
         sumTotal += r.total;
     }
-    int avgPct = (sumTotal > 0) ? (sumCorrect * 100 / sumTotal) : 0;
+    qint64 avgPct = (sumTotal > 0) ? (sumCorrect * 100 / sumTotal) : 0;
     m_quizSummaryLabel->setText(
-        QString("共 %1 次测验  |  平均正确率 %2%").arg(totalQuizzes).arg(avgPct));
+        QString("最近 %1 次测验（最多 20 次） | 正确率 %2%").arg(totalQuizzes).arg(avgPct));
 }

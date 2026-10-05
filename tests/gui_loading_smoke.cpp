@@ -14,9 +14,12 @@
 #include <QTableWidget>
 #include <QTest>
 #include <QTimer>
+#include <QTemporaryDir>
 #include <iostream>
 #include <stdexcept>
+#ifdef _WIN32
 #include <windows.h>
+#endif
 
 static void require(bool condition, const char* message)
 {
@@ -32,7 +35,9 @@ static QPushButton* buttonWithText(QWidget* parent, const QString& text)
 
 int main(int argc, char* argv[])
 {
+#ifdef _WIN32
     SetErrorMode(SEM_NOGPFAULTERRORBOX | SEM_FAILCRITICALERRORS);
+#endif
     QApplication app(argc, argv);
     const QString dictionary = QCoreApplication::applicationDirPath() + "/words/dictionary.txt";
     if (!QFileInfo::exists(dictionary)) {
@@ -41,7 +46,9 @@ int main(int argc, char* argv[])
     }
 
     try {
-        MainWindow window;
+        QTemporaryDir userData;
+        require(userData.isValid(), "cannot create isolated user data");
+        MainWindow window(nullptr, userData.path());
         window.show();
         app.processEvents();
         auto* nav = window.findChild<QListWidget*>("navList");

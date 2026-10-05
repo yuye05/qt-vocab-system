@@ -13,9 +13,11 @@
 #include <QFrame>
 #include <QDir>
 #include <QCoreApplication>
+#include <QStandardPaths>
+#include <QMessageBox>
 #include <vector>
 
-MainWindow::MainWindow(QWidget* parent)
+MainWindow::MainWindow(QWidget* parent, const QString& dataDirectory)
     : QMainWindow(parent), m_dictRoot(nullptr)
 {
     // 页面构造时可能读取生词本，先统一设置数据目录。
@@ -29,7 +31,13 @@ MainWindow::MainWindow(QWidget* parent)
     dataDirs.push_back(QDir(exeDir + "/../release").absolutePath().toStdString()); // release 交叉
     dataDirs.push_back(QDir(exeDir + "/../../words").absolutePath().toStdString());
     dataDirs.push_back(QDir(exeDir + "/../../").absolutePath().toStdString());   // 项目根
-    setDataSearchDirs(dataDirs);
+    dataDirs.push_back(QDir::currentPath().toStdString()); // 兼容旧版写在工作目录的历史
+    // 测试可注入独立目录；实际程序使用 Windows LOCALAPPDATA / 其他平台用户数据目录。
+    const std::string userDir = (dataDirectory.isEmpty()
+        ? QDir(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)).filePath("QtVocabSystem")
+        : dataDirectory).toStdString();
+    if (!initializeDataDirectory(userDir, dataDirs))
+        QMessageBox::warning(this, "数据目录初始化失败", QString::fromStdString(dataError()));
 
     setupUi();
     loadDictionary();
@@ -117,13 +125,9 @@ void MainWindow::loadDictionary()
 {
     // 加载词典数据到持久 BST（不再释放）
     m_dictRoot = loadFromFile(nullptr, DICT_FILE);
-    int wordCount = countWords(m_dictRoot);
-    m_homePage->setStats(wordCount, countWrongWords());
-
-    // 收集词性分布统计
-    std::vector<POSStat> posStats;
-    getPOSStats(m_dictRoot, posStats);
-    m_homePage->setPOSStats(posStats);
+    if (!dataError().empty())
+        QMessageBox::warning(this, "词库读取提示", QString::fromStdString(dataError()));
+    refreshHome();
 
     // 将 BST 根指针的指针传给词库管理页面（DictWidget 可修改根节点）
     m_dictPage->setRoot(&m_dictRoot);
@@ -135,19 +139,25 @@ void MainWindow::loadDictionary()
     m_wrongPage->setRoot(&m_dictRoot);
 }
 
+void MainWindow::refreshHome()
+{
+    const int wrongCount = countWrongWords();
+    QString readError = QString::fromStdString(dataError());
+    m_homePage->setStats(countWords(m_dictRoot), wrongCount);
+    std::vector<POSStat> stats;
+    getPOSStats(m_dictRoot, stats);
+    m_homePage->setPOSStats(stats);
+    m_homePage->setQuizHistory(loadQuizHistory());
+    if (!dataError().empty()) readError += "\n" + QString::fromStdString(dataError());
+    if (!readError.isEmpty()) QMessageBox::warning(this, "学习记录读取提示", readError);
+}
+
 void MainWindow::onNavChanged(int index)
 {
     m_pages->setCurrentIndex(index);
 
     // 切换到首页时刷新统计（词库可能有增删）
-    if (index == 0 && m_dictRoot) {
-        int wordCount = countWords(m_dictRoot);
-        m_homePage->setStats(wordCount, countWrongWords());
-        std::vector<POSStat> posStats;
-        getPOSStats(m_dictRoot, posStats);
-        m_homePage->setPOSStats(posStats);
-        m_homePage->setQuizHistory(loadQuizHistory());
-    }
+    if (index == 0) refreshHome();
 
     // 切换到生词本时刷新列表
     if (index == 3) {

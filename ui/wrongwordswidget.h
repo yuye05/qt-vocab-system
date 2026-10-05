@@ -13,7 +13,6 @@ class WrongWordsWidget : public QWidget {
     Q_OBJECT
 public:
     explicit WrongWordsWidget(QWidget* parent = nullptr);
-    ~WrongWordsWidget() override;
     void setRoot(DictNode** rootPtr);
     void refreshList();
     void keyPressEvent(QKeyEvent* event) override;
@@ -29,7 +28,6 @@ private slots:
     void onStartQuiz();
     void onSubmitOrNext();
     void onCancel();
-    void onSpellingReturn();
     void onCardShowAnswer();
     void onCardMastered();
     void onCardNotMastered();
@@ -42,7 +40,9 @@ private:
     void buildQuizSetupPage();
     void buildQuizPage();
     void buildCardPage();
-    void loadWrongWordList(std::vector<WrongWord>& arr);
+    std::vector<WordEntry> validWrongWords();
+    bool handleKey(QKeyEvent* event);
+    bool eventFilter(QObject* object, QEvent* event) override;
 
     // 测验相关
     void startQuiz();
@@ -75,7 +75,8 @@ private:
     int         m_correctCount  = 0;
     int         m_quizTotal     = 0;
     bool        m_answered      = false;
-    std::vector<WrongWord> m_wrongArr;     // 当前生词本快照（测验用）
+    std::vector<WordEntry> m_wrongArr;     // 本轮有效生词快照
+    std::vector<WordEntry> m_optionWords;  // 完整词库快照，供干扰项和等价答案使用
     std::vector<int>       m_quizIndices;
     std::vector<std::string> m_correctWords;  // 本轮测验答对（测验结束时统一移除）
 
@@ -92,7 +93,7 @@ private:
     int         m_cardIdx = 0;
     int         m_cardMastered = 0;      // 本次翻阅掌握的单词数
     bool        m_cardShowAnswer = false;
-    std::vector<WrongWord> m_cardArr;
+    std::vector<WordEntry> m_cardArr;
     QLabel*     m_cardProgressLabel = nullptr;
     QWidget*    m_cardProgressFill  = nullptr;
     QLabel*     m_cardWordLabel     = nullptr;

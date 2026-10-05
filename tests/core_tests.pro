@@ -1,0 +1,10 @@
+QT += core
+QT -= gui
+TEMPLATE = app
+CONFIG += c++17 console
+TARGET = core_tests
+msvc: QMAKE_CXXFLAGS += /utf-8
+isEmpty(TEST_SOURCE): TEST_SOURCE = $$PWD/dictionary_loading_test.cpp
+INCLUDEPATH += $$PWD/..
+SOURCES += $$TEST_SOURCE ../core/dictionary.cpp
+HEADERS += ../core/dictionary.h

@@ -14,14 +14,14 @@
 |------|------|------|
 | 🏠 **首页仪表盘** | 词汇量统计 | 显示词典总词数、生词本数量、词性种类 |
 | | 词性分布图 | 柱状图展示词性分布（Top 6） |
-| | 测验历史 | 最近测验记录 + 累计正确率 |
+| | 测验历史 | 最近 20 次测验记录 + 该范围内正确率 |
 | 📖 **词典管理** | 单词搜索 | 支持精确查找和前缀模糊匹配 |
 | | 添加单词 | 带输入校验（语言规则检查），一键入库 |
 | | 删除单词 | 选中删除，二次确认 |
 | | 词典浏览 | 字母序排列，表格化展示 |
-| 📝 **测验系统** | 拼写模式 | 看中文释义，手动拼写英文单词 |
-| | 英→中模式 | 看英文，从 4 个选项中选择正确中文 |
-| | 中→英模式 | 看中文，从 4 个选项中选择正确英文 |
+| 📝 **测验系统** | 拼写模式 | 看中文释义拼写英文，同词性和同释义的词库答案均接受 |
+| | 英→中模式 | 看英文，从最多 4 个无歧义选项中选择中文 |
+| | 中→英模式 | 看中文，从最多 4 个无歧义选项中选择英文 |
 | | 题量可调 | 5 / 10 / 15 / 20 题自由选择 |
 | | 键盘快捷键 | 数字键选答案，回车/空格翻题 |
 | ❌ **生词本** | 自动收录 | 测验答错自动加入，按错误次数排序 |
@@ -63,8 +63,9 @@ flowchart LR
 
 - **页面栈导航**：主窗口侧边栏切换 4 个页面（`QStackedWidget`），各页面独立 Widget，解耦模块
 - **BST 词典**：加载完成时树高为 O(log n)；运行期间按普通 BST 增删查改，耗时取决于树高，最坏 O(n)。前缀查询目前遍历整棵树
-- **多路径资源回退**：QSS 从 `applicationDirPath()` 出发多路径搜索；词库和生词本优先从 EXE 同级的 `words/` 读取，并兼容 Qt Creator 的构建目录。数据路径在主窗口加载词典前统一设置，避免被重复配置覆盖
-- **数据持久化**：生词本、测验历史以纯文本文件存储，程序启动时加载、退出时落盘
+- **资源与用户数据**：QSS 继续使用多路径查找。首次运行从程序旁或构建目录读取初始词库与旧记录，复制到固定用户数据目录；后续读写使用用户目录，更新程序或重新构建不会覆盖用户数据。
+- **数据持久化**：采用 UTF-8 文本与 Qt `QSaveFile` 原子写入。词典编辑先在临时树上进行，保存成功后替换当前词库；生词本和历史在操作发生时保存。损坏行会显示文件路径和行号，并阻止覆盖原文件。
+- **测验快照**：题目、选项与卡片使用独立词条数据，删除或修改词典不会使进行中的测验访问失效节点。选择题排除同词性和同释义的干扰项；拼写题接受该范围内的等价英文答案，并展示本题目标词。
 
 ---
 
@@ -72,7 +73,7 @@ flowchart LR
 
 原实现先用 Fisher-Yates 打乱词条，再逐个插入普通 BST，以降低有序输入造成树退化的风险。现在针对“启动时批量加载、运行时查询和少量修改”的使用方式，改为**有序词条直接构建平衡 BST**：
 
-1. 读取并解析有效词条，保留原有文件格式及文本字节编码。
+1. 读取并解析有效词条。初始词库使用 UTF-8；读取兼容旧文本格式，新保存文件采用独立字段的 TSV 格式。
 2. 按与查询一致的、忽略大小写的比较规则检查顺序；已有序则跳过排序，乱序时使用稳定排序。
 3. 原地合并重复单词：保留首次出现的拼写，以文件中最后一条词性和释义为准。原先加载时随机洗牌会使重复条目的覆盖顺序不确定，本次将其固定下来。
 4. 取中间词条为根，递归处理左右两半，直接连接节点，无需再逐项搜索插入位置。
@@ -107,7 +108,7 @@ flowchart LR
 ```
 qt-vocab-system/
 ├── VocabularySystem.pro   # Qt 工程文件（qmake）
-├── main.cpp               # 程序入口，QSS 多路径加载 + 数据目录注册
+├── main.cpp               # 程序入口与 QSS 多路径加载
 ├── core/
 │   ├── dictionary.h       # 核心数据结构与函数声明
 │   └── dictionary.cpp     # BST 增删查改 + 测验逻辑 + 生词本
@@ -126,7 +127,11 @@ qt-vocab-system/
 │   ├── dictionary_loading_test.cpp  # 加载、查找、编辑、保存重载回归测试
 │   ├── loading_benchmark.cpp        # 词库内容、树高、加载及查询耗时对比
 │   ├── gui_loading_smoke.cpp        # 实际界面词库与操作回归测试
-│   └── gui_loading_smoke.pro        # Qt 测试工程
+│   ├── gui_loading_smoke.pro        # Qt 界面测试工程
+│   ├── dictionary_safety_test.cpp   # 数据安全、迁移、评分和边界回归
+│   ├── functional_regression.cpp    # 保存回滚、完整测验、快捷键和空状态回归
+│   ├── core_tests.pro               # Qt Core 核心测试工程
+│   └── run_tests.ps1                # 一次运行四组测试，隔离全部用户数据
 ├── .gitignore
 └── LICENSE                # MIT
 ```
@@ -179,22 +184,30 @@ qt-vocab-system/
 
 ---
 
-## 数据文件格式
+## 用户数据与文件格式
 
-- **`words/dictionary.txt`**：每行一条，格式为 `单词  词性释义`（单词与释义之间用两个空格分隔）
-- **`words/wrong_words.txt`**：每行一条，格式为 `单词 错误次数`，由程序自动维护
+Windows 使用 `%LOCALAPPDATA%/QtVocabSystem/`；Linux/macOS 使用 Qt 标准用户数据位置下的 `QtVocabSystem/`。首次运行复制找到的初始词库、旧生词本和旧历史，原文件保持不变；已有用户文件不会被覆盖。后续缺失的生词本或历史创建为空文件，不会重新导入旧记录。
+
+- **初始 `words/dictionary.txt`**：UTF-8，每行 `单词  词性释义`。现有发布包的 GBK 词库可在 Windows 上自动转为 UTF-8 后复制到用户目录。
+- **用户 `dictionary.txt`**：编辑保存后使用 UTF-8 TSV，首行为 `# qt-vocab UTF-8 TSV v1`，随后每行是 `单词<TAB>词性<TAB>释义`。词性与释义独立保存，支持 `noun`、`n. v.` 等输入；字段不允许制表符和换行。
+- **`wrong_words.txt`**：每行 `单词 错误次数`，没有固定的 200 词限制。普通测验和专项测验再次答错都会增加次数；完成专项测验后批量移除答对的生词。
+- **`quiz_history.txt`**：每行 `时间戳|模式|正确数|题数`，最多保留最近 20 次。界面正确率仅对应保留的记录。
+- 旧版程序不能读取新 TSV 格式；新程序不会把用户数据写回旧发布包目录，因此原有旧文件仍可保留。
 
 ---
 
-## 已知问题与开发注意事项
+## 开发注意事项
 
-1. **资源路径**：直接运行发布版时，`dictionary.txt` 与 `wrong_words.txt` 应位于 EXE 同级的 `words/`。Qt Creator 构建仍会尝试构建根目录和源码目录；若打开后首页显示 0 词，先检查发布目录的 `words/dictionary.txt`
-2. **Shadow build 复制**：`.pro` 中 `COPIES` 同时配置了 `release/` 和 `debug/`，将数据文件复制到 `$$OUT_PWD/release` 与 `$$OUT_PWD/debug`，确保两种构建模式下 EXE 旁都有数据文件和样式
-3. **中文编码**：MSVC 下 `.pro` 已配置 `/source-charset:utf-8`；MinGW 下无需配置，但要保证源文件是 UTF-8 编码
+1. 首次启动必须能找到初始词库，推荐放在 EXE 同级的 `words/`；现有 `.pro` 复制到 EXE 同级根目录的布局也兼容。
+2. 用户数据目录可写即可，程序资源目录可以只读。重新构建复制的是初始资源，用户记录位于独立目录。
+3. 源代码和初始词库均为 UTF-8，MSVC 工程已配置 UTF-8 字符集。不要把用户文件另存为本机 ANSI 编码。
+4. 损坏数据不会被自动删除或覆盖；按错误提示找到文件和行号，修正格式后重试。
 
 ---
 
 ## 优化验证与本机实测
+
+以下是 **2026-09-24 的历史算法实验记录**，对应当时的实现及 GBK 词库。当前版本已改用 Qt Core 文件处理和 UTF-8 数据，历史耗时不代表当前版本的性能保证；树高和查询正确性仍由回归测试检查。
 
 2026-09-24，Windows、Qt 6.11.0 配套 MinGW GCC 13.1.0，使用 `-std=c++17 -O2`，对比改动前的 `6c256c6` 与本次实现。测试原始词库及仅重新排序的同一份词库，均为 3700 个词条。
 
@@ -211,39 +224,38 @@ qt-vocab-system/
 
 回归测试还覆盖：有序、逆序、乱序输入；大小写查询和重复覆盖；空文件、无效行和单词条；前缀结果；增删改；保存后重载内容一致；文件缺失和向已有树合并。
 
-在配置好 MinGW 13.1 的 PowerShell 终端中，从仓库根目录执行：
+当前版本的核心测试链接 Qt Core（用于原子文件写入和编码处理），不需要 GUI。测试使用临时目录和词库副本，不读写实际用户数据。
+
+在配置好 Qt MinGW Kit 的 PowerShell 中，从仓库根目录运行全部四组测试：
 
 ```powershell
-# 核心逻辑测试，不依赖 Qt GUI 库；可执行文件写入系统临时目录
-g++ -std=c++17 -O2 -Wall -Wextra -I. tests/dictionary_loading_test.cpp core/dictionary.cpp -o "$env:TEMP/vocab-loading-test.exe"
-if ($LASTEXITCODE -ne 0) { throw "测试编译失败" }
-& "$env:TEMP/vocab-loading-test.exe"
-if ($LASTEXITCODE -ne 0) { throw "回归测试失败" }
-
-# 当前版本的原始词库基准
-g++ -std=c++17 -O2 -I. tests/loading_benchmark.cpp core/dictionary.cpp -o "$env:TEMP/vocab-loading-benchmark.exe"
-if ($LASTEXITCODE -ne 0) { throw "基准编译失败" }
-& "$env:TEMP/vocab-loading-benchmark.exe" words/dictionary.txt
+./tests/run_tests.ps1
+# 或明确指定工具链，避免 PATH 中旧版 MinGW 被选中：
+./tests/run_tests.ps1 -QtBin 'D:/Qt/Download/6.11.0/mingw_64/bin' -CompilerBin 'D:/Qt/Download/Tools/mingw1310_64/bin'
 ```
 
-本次同时完成了 Qt 6.11.0 / MinGW 13.1 的 Release 完整构建。上述回归测试针对词典核心逻辑，不等同于全部界面功能的自动化测试。
+四组程序分别覆盖：
 
-针对“程序能打开但词库为空”的问题，还增加了 Qt 界面回归测试：在独立的测试目录放置词库副本，检查首页显示 3700 词，并实际操作搜索、添加、删除、测验答题和生词卡片。原版在“首页显示 3700 词”处失败；修复数据目录配置后全部通过。测试只写入测试目录内的词库副本。
+1. BST 加载、排序去重、树高、查找、增删、保存重载和中文路径。
+2. 旧 GBK 数据迁移、UTF-8/词性字段重载、坏记录保护、生词容量、历史严格校验、小词库选项和等价答案。
+3. 3700 词的实际页面加载、搜索、添加删除、拼写答题和卡片揭示。
+4. 空词库恢复、编辑失败回滚、关联生词删除、1～3 词选择题、删词后的测验快照、Enter/Space 操作、完整专项训练、错误计数和首页刷新。
 
-使用安装了 Qt Widgets 与 Qt Test 模块的 Qt 6.11.0 MinGW Kit，从仓库根目录执行：
+测试失败返回非零退出码并保留构建日志路径。GUI 测试工程也可在其他平台使用 qmake 构建；当前修复的实测环境为 Windows / Qt 6.11.0 / MinGW 13.1，MSVC、Linux 和 macOS 尚未进行本轮实机验证。
+
+现有核心基准仍可单独运行：
 
 ```powershell
-New-Item -ItemType Directory -Force build/gui-smoke/words | Out-Null
-Copy-Item words/dictionary.txt,words/wrong_words.txt build/gui-smoke/words/
-Push-Location build/gui-smoke
-qmake ../../tests/gui_loading_smoke.pro CONFIG+=release
+$benchmarkSource = (Resolve-Path tests/loading_benchmark.cpp).Path.Replace('\', '/')
+New-Item -ItemType Directory -Force build/benchmark | Out-Null
+Push-Location build/benchmark
+qmake ../../tests/core_tests.pro "TEST_SOURCE=$benchmarkSource" CONFIG+=release CONFIG-=debug_and_release DESTDIR=.
+if ($LASTEXITCODE -ne 0) { throw "qmake failed" }
 mingw32-make -j4
-$env:QT_QPA_PLATFORM = 'offscreen'
-./gui_loading_smoke.exe
+if ($LASTEXITCODE -ne 0) { throw "benchmark compilation failed" }
+./core_tests.exe ../../words/dictionary.txt
 Pop-Location
 ```
-
-应用的数据目录在主窗口初始化时统一设置，发布版优先读取 EXE 同级的 `words/`；直接运行已打包的 `build/release/VocabularySystem.exe` 即可加载词库。
 
 ---
 
