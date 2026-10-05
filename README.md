@@ -194,7 +194,7 @@ Pop-Location
 
 </details>
 
-BST 加载优化、回归测试和文档由 Codex 辅助完成。
+BST 平衡树加载优化、回归测试和文档由 Codex 辅助完成。
 
 ## License
 
