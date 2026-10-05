@@ -112,7 +112,13 @@ Windows 数据目录为 `%LOCALAPPDATA%/QtVocabSystem/`；其他平台使用 Qt 
 
 首次运行复制找到的初始词库、旧生词本和历史，不覆盖原文件或已有用户文件。以后直接读写用户目录，重新构建不会覆盖学习记录；缺失的生词本和历史创建为空文件，不重复导入旧记录。
 
+当前仓库的 `words/wrong_words.txt` 非空，首次运行会导入其中的记录。制作面向新用户的运行包时，可提供空的生词本文件，让学习记录从零开始。
+
 程序资源目录可以只读，用户数据目录需要可写。初始资源的构建复制与后续用户数据保存相互独立。
+
+### 词库来源
+
+初始词库由维护者从网络资料收集并整理，内容为初高中英语 3700 词。目前未附具体的原始来源链接或独立的数据许可说明；词表与释义的权利及使用条件需以原来源为准。项目的 MIT 许可范围见文末说明。
 
 | 文件 | 格式与用途 |
 | --- | --- |
@@ -143,6 +149,8 @@ qt-vocab-system/
 ├── style/app.qss          # 全局样式
 ├── words/                 # 初始词库与生词记录
 ├── docs/images/           # README 页面截图，需随文档一起提交
+├── CONTRIBUTING.md        # 贡献方式、验证流程与许可要求
+├── CHANGELOG.md           # 已实现改动与兼容性说明
 └── tests/
     ├── dictionary_loading_test.cpp  # BST 加载回归
     ├── dictionary_safety_test.cpp   # 数据安全与出题边界
@@ -173,7 +181,7 @@ qt-vocab-system/
 - [词库加载](tests/dictionary_loading_test.cpp)：有序、逆序和乱序输入，大小写与重复覆盖，空文件和无效行，树高、前缀与精确查询、增删、保存重载、文件缺失、已有树合并及中文路径。
 - [数据安全](tests/dictionary_safety_test.cpp)：GBK 迁移、UTF-8/TSV 重载、坏记录保护、生词容量、历史严格校验、小词库选项及等价答案。
 - [界面冒烟](tests/gui_loading_smoke.cpp)：3700 词的页面加载、搜索、添加删除、答题和卡片揭示。
-- [功能回归](tests/functional_regression.cpp)：空词库恢复、保存回滚、关联生词清理、删词后的测验快照、1～3 词选择题、快捷键、完整专项训练、错误计数和首页刷新。
+- [功能回归](tests/functional_regression.cpp)：空词库恢复、保存回滚、关联生词清理、删词后的测验快照、1～3 词选择题、三种模式的错题再练、快捷键、完整专项训练、错误计数和首页刷新。
 
 核心测试链接 Qt Core，不需要 GUI。界面测试使用 Qt Widgets 和 Qt Test，可通过 [测试工程](tests/gui_loading_smoke.pro) 构建。
 
@@ -194,8 +202,12 @@ Pop-Location
 
 </details>
 
-BST 平衡树加载优化、回归测试和文档由 Codex 辅助完成。
+## 项目维护与贡献
+
+项目由 [yuye05](https://github.com/yuye05) 维护。问题或建议可提交到 [Issues](https://github.com/yuye05/qt-vocab-system/issues)；代码贡献与验证要求见 [贡献指南](CONTRIBUTING.md)，版本变化见 [更新日志](CHANGELOG.md)。
+
+本轮功能范围、等价拼写答案和错题再练保留生词的规则由维护者确认；代码实现、问题排查、回归测试和文档由 Codex 辅助完成。BST 的批量建树属于普通 BST 的启动加载优化，运行期增删仍不保证平衡。
 
 ## License
 
-采用 [MIT License](LICENSE)，按许可条款可使用、修改和分发。
+项目原创代码与文档采用 [MIT License](LICENSE)，版权署名为 `yuye05`。词库的来源与许可情况见 [词库来源](#词库来源)。Qt、编译器运行库及其他第三方资源各自适用原许可；分发包含 Qt 动态库的运行包时，应一并遵守相应分发条款。

@@ -9,6 +9,13 @@
 *.so.*
 *.dll
 *.dylib
+*.exe
+
+# Temporary build and diagnostic files
+*.log
+*.tmp
+*.bak
+.qmake.stash
 
 # Qt-es
 object_script.*.Release
